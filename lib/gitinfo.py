@@ -35,6 +35,13 @@ NO_GIT = "no-git"
 #: both places, for the same reason.
 OWN_PREFIX = ".baton/"
 
+#: git pathspec excluding baton's own directory. Needed when COUNTING COMMITS
+#: too, not just files: the design says the handoff is committed, so a commit
+#: touching nothing else happens on every single handoff. Counting it produced
+#: the nonsense "1 new commits and 0 changed files" -- a notice firing for the
+#: act of saving the handoff, which is a notice the model learns to ignore.
+EXCLUDE_OWN = f":(exclude){OWN_PREFIX}"
+
 _git_available = None
 
 
@@ -219,14 +226,15 @@ def freshness(root, document_date, document_branch, document_commit, strings) ->
         if _git(root, "cat-file", "-e", f"{document_commit}^{{commit}}") is None:
             lost = True
         else:
-            out = _git(root, "rev-list", "--count", f"{document_commit}..HEAD")
+            out = _git(root, "rev-list", "--count", f"{document_commit}..HEAD",
+                       "--", ".", EXCLUDE_OWN)
             try:
                 new = int((out or "0").strip())
             except ValueError:
                 new = 0
             if new:
                 listing = _git(root, "diff", "--name-only", "-z",
-                               f"{document_commit}..HEAD") or ""
+                               f"{document_commit}..HEAD", "--", ".", EXCLUDE_OWN) or ""
                 changed = len([x for x in listing.split("\0") if x and not _is_own(x)])
 
     return Freshness(True, days, document_branch or "", s.branch, new, changed, lost, strings)

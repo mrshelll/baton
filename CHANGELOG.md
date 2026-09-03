@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1 — 2026-09-03
+
+### Fixed
+- The freshness notice fired for baton's own commits. Committing the handoff --
+  which the design tells you to do -- produced the self-contradicting "1 new
+  commits and 0 changed files" on the next session. Since it happened on every
+  single handoff, the notice would have fired always, and a notice that always
+  fires is one the model learns to ignore. Commits touching nothing outside
+  `.baton/` no longer count.
+
+Found by running the manual acceptance tests on a real install, which is exactly
+what they are for.
+
 ## 0.3.0 — 2026-09-03
 
 Internationalisation. Breaking change: config keys, mode values and file names

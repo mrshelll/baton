@@ -148,6 +148,47 @@ class TestFreshness(BaseCase):
         self.init_git()
         self.assertIsInstance(self.freshness("yesterday afternoon", "main", "abc1234").notice(), str)
 
+
+    def test_a_commit_touching_only_batons_files_is_not_a_change(self):
+        # The design says the handoff is committed, so this happens on every
+        # single handoff. Counting it would fire a freshness notice for the act
+        # of saving the handoff itself -- and a notice that always fires is one
+        # the model learns to ignore.
+        self.init_git()
+        old = gitinfo.snapshot(self.project).commit
+        (self.project / ".baton").mkdir()
+        (self.project / ".baton" / "HANDOFF.md").write_text("x", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "chore: handoff")
+        f = self.freshness(gitinfo.now_iso(), "main", old)
+        self.assertEqual(f.new_commits, 0, "committing the handoff is not a code change")
+        self.assertEqual(f.notice(), "", "it must not spend a single line")
+
+    def test_a_commit_touching_code_and_baton_still_counts(self):
+        self.init_git()
+        old = gitinfo.snapshot(self.project).commit
+        (self.project / ".baton").mkdir()
+        (self.project / ".baton" / "HANDOFF.md").write_text("x", encoding="utf-8")
+        (self.project / "code.py").write_text("y", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "feat: real work")
+        f = self.freshness(gitinfo.now_iso(), "main", old)
+        self.assertEqual(f.new_commits, 1)
+        self.assertEqual(f.changed_files, 1)
+
+    def test_the_notice_never_contradicts_itself(self):
+        # "1 new commits and 0 changed files" is nonsense: if nothing the user
+        # owns changed, there is nothing to warn about.
+        self.init_git()
+        old = gitinfo.snapshot(self.project).commit
+        (self.project / ".baton").mkdir()
+        for i in range(3):
+            (self.project / ".baton" / "HANDOFF.md").write_text(f"v{i}", encoding="utf-8")
+            self.git("add", "-A")
+            self.git("commit", "-q", "-m", f"chore: handoff {i}")
+        f = self.freshness(gitinfo.now_iso(), "main", old)
+        self.assertFalse(f.new_commits and not f.changed_files, f.notice())
+
     def test_every_notice_carries_the_same_marker(self):
         # One marker to look for, not three wordings saying the same thing.
         self.init_git()
@@ -157,7 +198,5 @@ class TestFreshness(BaseCase):
                      (gitinfo.now_iso(), "main", "0" * 7)):
             with self.subTest(args=args):
                 self.assertIn("Freshness notice", self.freshness(*args).notice())
-
-
 if __name__ == "__main__":
     unittest.main()

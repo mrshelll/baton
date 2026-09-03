@@ -1,6 +1,6 @@
 {
   "name": "baton",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Context handoff between Claude Code sessions with a document that does NOT grow: rewritten whole every time, with a hard line and character budget enforced by code and derived from the harness's real 8000-character ceiling. Two modes: continue (resume the unfinished task) and memory (keep this in mind and WAIT for instructions). Git facts -branch, commit, uncommitted files, date- come from the code, not the model. On injection it flags freshness against git, but never expires. English and Spanish.",
   "author": {
     "name": "Miguelacho",
