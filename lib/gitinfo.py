@@ -201,7 +201,7 @@ class Freshness:
         return text + f["closing"]
 
 
-def _days_since(iso_date) -> float | None:
+def days_since(iso_date) -> float | None:
     if not isinstance(iso_date, str) or not iso_date.strip():
         return None
     try:
@@ -215,7 +215,7 @@ def _days_since(iso_date) -> float | None:
 
 def freshness(root, document_date, document_branch, document_commit, strings) -> Freshness:
     """Compare the document against the repo as it is now. Never raises."""
-    days = _days_since(document_date)
+    days = days_since(document_date)
     s = snapshot(root)
     if not s.has_git:
         return Freshness(False, days, document_branch or "", NO_GIT, 0, 0, False, strings)

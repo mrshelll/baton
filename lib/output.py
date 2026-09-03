@@ -80,8 +80,62 @@ def _disable_closing_tag(text: str, tag: str) -> str:
     return text.replace(f"</{tag}>", f"<⁄{tag}>")
 
 
+#: A project name is a directory name, and directory names travel inside cloned
+#: repos. Same treatment as the document body, plus a cap: one 300-character name
+#: would push the whole listing out of the budget on its own.
+MAX_NAME = 60
+
+
+def _age(date: str, strings: dict) -> str:
+    from lib import gitinfo
+    days = gitinfo.days_since(date)
+    if days is None:
+        return strings["index"]["age_unknown"]
+    if days >= 1:
+        return strings["index"]["age_days"].format(n=int(days))
+    hours = int(days * 24)
+    return (strings["index"]["age_now"] if hours < 1
+            else strings["index"]["age_hours"].format(n=hours))
+
+
+def index_block(root, cards, strings=None, truncated: bool = False) -> str:
+    """The index injected when the root holds several projects.
+
+    It grants nothing. Receiving a list of what exists is not receiving context,
+    and it is certainly not authorisation to work: the same decision the memory
+    mode makes, one level up.
+    """
+    s = strings or load_strings()
+    i = s["index"]
+    tag = i["tag"]
+
+    # The disabling is applied to the lines and NOT to the finished block: the
+    # names come from directories and are untrusted, but the block's own closing
+    # tag is ours and neutering it would leave the index open.
+    lines = [
+        _disable_closing_tag(
+            i["line"].format(name=sanitize(card.name)[:MAX_NAME], mode=card.mode,
+                             age=_age(card.date, s), rel=sanitize(card.rel)[:200]), tag)
+        for card in cards
+    ]
+
+    head = [f'<{tag} root="{sanitize(str(root))}" count="{len(cards)}">', "", i["header"], ""]
+    tail = ["", i["footer"], ""] + ([i["truncated"], ""] if truncated else []) + [f"</{tag}>"]
+    fixed = "\n".join(head + tail) + "\n"
+
+    room_chars = budget.CEILING_CHARACTERS - len(fixed) - len(i["and_more"]) - 2
+    room_lines = budget.CEILING_LINES - len(fixed.split("\n")) - 2
+    shown, cut = budget.trim_to_lines("\n".join(lines), room_chars, room_lines)
+
+    body = [shown.rstrip("\n")]
+    if cut:
+        body.append(i["and_more"].format(n=len(lines) - len(shown.rstrip("\n").split("\n"))))
+
+    return "\n".join(head + body + tail)
+
+
 def wrap(body, mode, written, source, freshness_notice="", repeat=None,
-         strings=None) -> str:
+         strings=None, index="") -> str:
     """Build the exact text injected as `additionalContext`.
 
     Deliberate order: the mode instruction first (it is the one thing that must
@@ -104,6 +158,11 @@ def wrap(body, mode, written, source, freshness_notice="", repeat=None,
     head += [s["data_warning"], ""]
 
     tail = [s["document_close"], f"</{tag}>"]
+    if index:
+        # Inside `tail`, not concatenated by the caller: `fixed` below is what
+        # decides how much room the document gets, and an index bolted on
+        # afterwards would be room nobody measured.
+        tail += ["", index]
     clean_body = _disable_closing_tag(sanitize(body), tag)
 
     # What is left for the document is the ceiling minus everything else,

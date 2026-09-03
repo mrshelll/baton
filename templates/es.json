@@ -74,6 +74,18 @@
     "missing_required": "falta la seccion obligatoria '{label}'",
     "continue_needs_next": "el modo continue exige '{label}': o escribes que retomar, o el modo es memory"
   },
+  "index": {
+    "tag": "baton-index",
+    "header": "Esta carpeta contiene varios proyectos con traspaso propio. NO has recibido el contexto de ninguno, y NO debes abrir ninguno todavia.",
+    "line": "  {name}  {mode} · {age} · {rel}",
+    "footer": "Cuando el usuario diga en cual estan trabajando, y solo entonces, ejecuta `baton.py load <nombre>`: eso te entrega ese traspaso con sus instrucciones y lo marca como el proyecto activo de esta sesion. Hasta entonces, saluda en UNA linea diciendo que proyectos hay y espera.",
+    "truncated": "[baton] El escaneo toco su tope: puede haber mas proyectos de los que se listan.",
+    "and_more": "  (+{n} mas, sin sitio para listarlos)",
+    "age_now": "recien",
+    "age_hours": "hace {n} h",
+    "age_days": "hace {n} d",
+    "age_unknown": "sin fecha"
+  },
   "cli": {
     "written": "baton: traspaso escrito en {path}",
     "stats": "  modo {mode} - {lines}/{max_lines} lineas, {chars}/{max_chars} caracteres (~{tokens} tokens)",

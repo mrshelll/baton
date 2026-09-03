@@ -72,6 +72,18 @@
     "missing_required": "the required section '{label}' is missing",
     "continue_needs_next": "continue mode requires '{label}': either you write what to resume, or the mode is memory"
   },
+  "index": {
+    "tag": "baton-index",
+    "header": "This folder contains several projects with their own handoff. You have NOT received the context of any of them, and you must NOT open any yet.",
+    "line": "  {name}  {mode} · {age} · {rel}",
+    "footer": "When the user says which one they are working on, and only then, run `baton.py load <name>`: that hands you that handoff with its instructions and marks it as this session's active project. Until that happens, greet in ONE line saying which projects are available, and wait.",
+    "truncated": "[baton] The scan hit its limit: there may be more projects than these.",
+    "and_more": "  (+{n} more, not listed for lack of room)",
+    "age_now": "just now",
+    "age_hours": "{n} h ago",
+    "age_days": "{n} d ago",
+    "age_unknown": "no date"
+  },
   "cli": {
     "written": "baton: handoff written to {path}",
     "stats": "  mode {mode} - {lines}/{max_lines} lines, {chars}/{max_chars} characters (~{tokens} tokens)",

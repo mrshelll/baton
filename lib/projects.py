@@ -179,6 +179,33 @@ def resolve(root, discovery: Discovery, name, allow_new: bool = False):
     return None, everything
 
 
+@dataclass(frozen=True)
+class Card:
+    """What the index shows about one project."""
+    name: str
+    rel: str
+    mode: str
+    date: str
+
+
+def describe(project: SubProject, document_rel: str = DEFAULT_DOCUMENT) -> Card:
+    """Mode and date without reading the whole file.
+
+    Only `document.HEAD` bytes are read, for the same reason `document` reads
+    only the head: a 1 MB handoff, hand-edited or corrupt, must not cost time on
+    every session start. An unreadable document still gets a card, in the safe
+    mode -- like everything else here that cannot be read.
+    """
+    from lib import document
+    try:
+        with open(project.path / document_rel, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(document.HEAD)
+    except OSError:
+        head = ""
+    return Card(name=project.name, rel=project.rel, mode=document.read_mode(head),
+                date=document.read_fields(head).get("date", ""))
+
+
 # --- the session's active project -----------------------------------------
 #
 # It lives one session. `load` writes it and a fresh session start clears it, so

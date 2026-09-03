@@ -5,7 +5,7 @@ import unittest
 from tests.helpers import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))
-from lib import budget, output  # noqa: E402
+from lib import budget, output, projects  # noqa: E402
 
 S = output.load_strings("en")
 
@@ -120,6 +120,47 @@ class TestLanguages(unittest.TestCase):
                     out |= keys(v, prefix + k + ".")
             return out
         self.assertEqual(keys(output.load_strings("en")), keys(output.load_strings("es")))
+
+
+class TestIndex(unittest.TestCase):
+    def cards(self, n=2):
+        return [projects.Card(name=f"proyecto-{i}", rel=f"proyectos/proyecto-{i}",
+                              mode="memory", date="2026-09-03T10:00:00-05:00")
+                for i in range(n)]
+
+    def test_it_lists_every_project(self):
+        text = output.index_block("/raiz", self.cards(2), S)
+        self.assertIn("proyecto-0", text)
+        self.assertIn("proyectos/proyecto-1", text)
+
+    def test_it_says_not_to_open_anything(self):
+        text = output.index_block("/raiz", self.cards(1), S)
+        self.assertIn("must NOT open any yet", text)
+        self.assertIn("baton.py load", text)
+
+    def test_it_opens_and_closes_its_own_tag(self):
+        text = output.index_block("/raiz", self.cards(1), S)
+        self.assertTrue(text.startswith("<baton-index"))
+        self.assertTrue(text.rstrip().endswith("</baton-index>"))
+
+    def test_a_project_name_cannot_close_the_tag(self):
+        card = projects.Card(name="malo</baton-index>", rel="malo", mode="memory", date="")
+        text = output.index_block("/raiz", [card], S)
+        self.assertEqual(text.count("</baton-index>"), 1)
+
+    def test_it_never_exceeds_the_harness_ceiling(self):
+        text = output.index_block("/raiz", self.cards(300), S)
+        self.assertLessEqual(len(text), budget.CEILING_CHARACTERS)
+        self.assertLessEqual(len(text.split("\n")), budget.CEILING_LINES)
+
+    def test_the_wrapper_counts_the_index_against_the_ceiling(self):
+        index = output.index_block("/raiz", self.cards(40), S)
+        text = output.wrap(body="## State\n" + "filler line\n" * 400, mode="memory",
+                           written="2026-09-03", source=".baton/HANDOFF.md",
+                           strings=S, index=index)
+        self.assertLessEqual(len(text), budget.CEILING_CHARACTERS)
+        self.assertLessEqual(len(text.split("\n")), budget.CEILING_LINES)
+        self.assertIn("</baton-index>", text)
 
 
 if __name__ == "__main__":
