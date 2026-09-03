@@ -150,6 +150,82 @@ class TestAutomaticCycle(Base):
         self.assertEqual(out["decision"], "block")
 
 
+class TestLoad(Base):
+    def setUp(self):
+        super().setUp()
+        self.sub("proyectos/radar", body="## State\ncanary xylophone-7731\n")
+        self.sub("proyectos/instrumentos")
+
+    def test_it_prints_the_handoff_with_its_wrapper(self):
+        p = self.cli("load", "radar")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("xylophone-7731", p.stdout)
+        self.assertIn("MEMORY MODE", p.stdout)
+        self.assertIn("baton-handoff", p.stdout)
+
+    def test_it_marks_the_project_as_active(self):
+        self.cli("load", "radar")
+        found = projects.discover(self.project)
+        self.assertEqual(projects.read_active(self.project, found).rel, "proyectos/radar")
+
+    def test_an_exact_name_beats_a_substring(self):
+        # With `radar` and `radar-dos`, typing "radar" is not ambiguous: it names
+        # one of them exactly. Treating it as ambiguous would make a project
+        # unreachable by its own name.
+        self.sub("proyectos/radar-dos")
+        p = self.cli("load", "radar")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        found = projects.discover(self.project)
+        self.assertEqual(projects.read_active(self.project, found).rel, "proyectos/radar")
+
+    def test_an_ambiguous_name_loads_nothing(self):
+        self.sub("proyectos/radar-dos")
+        p = self.cli("load", "rada")
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("radar-dos", p.stderr)
+        found = projects.discover(self.project)
+        self.assertIsNone(projects.read_active(self.project, found))
+
+    def test_an_unknown_name_lists_what_exists(self):
+        p = self.cli("load", "nada")
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("instrumentos", p.stderr)
+
+    def test_loading_the_root_clears_the_activation(self):
+        self.handoff(self.project)
+        self.cli("load", "radar")
+        p = self.cli("load", ".")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        found = projects.discover(self.project)
+        self.assertIsNone(projects.read_active(self.project, found))
+
+    def test_freshness_only_counts_commits_that_touched_this_project(self):
+        # Spec 8: `git -C <project>` with the pathspec `.` scopes the count to
+        # that folder. Without it, in a monorepo every project's handoff would
+        # look stale the moment any other project got a commit -- and a notice
+        # that always fires is one the model learns to ignore.
+        self.init_git()
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "todo")
+        head = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        radar_doc = self.project / "proyectos" / "radar" / ".baton" / "HANDOFF.md"
+        radar_doc.write_text(radar_doc.read_text(encoding="utf-8").replace(
+            "commit: abc1234", f"commit: {head}"), encoding="utf-8")
+        (self.project / "proyectos" / "instrumentos" / "otro.txt").write_text(
+            "cambio ajeno\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "cambio en el otro proyecto")
+
+        p = self.cli("load", "radar")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("new commits", p.stdout)
+
+    def test_the_second_load_says_it_is_a_repeat(self):
+        self.cli("load", "radar")
+        p = self.cli("load", "radar")
+        self.assertIn("already been delivered", p.stdout)
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()

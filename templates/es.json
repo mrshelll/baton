@@ -91,6 +91,10 @@
     "stats": "  modo {mode} - {lines}/{max_lines} lineas, {chars}/{max_chars} caracteres (~{tokens} tokens)",
     "no_draft": "baton: no encuentro el borrador en {path}.\nEscribe ahi SOLO el cuerpo del traspaso (con Write) y repite el comando.",
     "invalid_mode": "baton: modo invalido '{mode}'. Usa: {valid}",
-    "invalid_draft": "baton: el borrador no cumple el contrato. No se ha escrito nada."
+    "invalid_draft": "baton: el borrador no cumple el contrato. No se ha escrito nada.",
+    "which_project": "baton: cual proyecto? Pasa uno con --project (o `.` para la raiz):",
+    "unknown_project": "baton: ningun proyecto coincide con '{name}'. Disponibles:",
+    "loaded": "baton: `{name}` es ahora el proyecto activo de esta sesion.",
+    "no_handoff_yet": "baton: `{name}` todavia no tiene traspaso ({path})."
   }
 }

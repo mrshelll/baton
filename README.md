@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-267-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-275-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -367,7 +367,7 @@ Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
 ./tests/run.sh
 ```
 
-267 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+275 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case

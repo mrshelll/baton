@@ -89,6 +89,10 @@
     "stats": "  mode {mode} - {lines}/{max_lines} lines, {chars}/{max_chars} characters (~{tokens} tokens)",
     "no_draft": "baton: no draft found at {path}.\nWrite ONLY the handoff body there (with Write) and repeat the command.",
     "invalid_mode": "baton: invalid mode '{mode}'. Use: {valid}",
-    "invalid_draft": "baton: the draft does not meet the contract. Nothing has been written."
+    "invalid_draft": "baton: the draft does not meet the contract. Nothing has been written.",
+    "which_project": "baton: which project? Pass one with --project (or `.` for the root itself):",
+    "unknown_project": "baton: no project matches '{name}'. Available:",
+    "loaded": "baton: `{name}` is now this session's active project.",
+    "no_handoff_yet": "baton: `{name}` has no handoff yet ({path})."
   }
 }

@@ -22,12 +22,13 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import budget, config, document, gitinfo, output, storage  # noqa: E402
+from lib import budget, config, document, gitinfo, output, projects, storage  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
@@ -39,12 +40,54 @@ OK, OVER_BUDGET, INVALID, ENVIRONMENT = 0, 1, 2, 3
 MAX_ATTEMPTS = 3
 
 
-def _project(args):
-    """Root, config, paths and strings: the preamble to almost every subcommand."""
+@dataclass
+class Ctx:
+    """Everything a subcommand needs once the target project is known."""
+    root: Path
+    target: "projects.Target"
+    cfg: config.Config
+    paths: storage.Paths
+    strings: dict
+    found: "projects.Discovery"
+
+
+def _resolve(args, allow_new: bool = False):
+    """Root, target, config, paths and strings: the preamble to every subcommand.
+
+    Returns `(ctx, code)`. A non-zero code means the caller returns it right
+    away: the candidates have already gone to stderr, and picking one for the
+    user is exactly what must not happen.
+    """
     root = storage.project_root(args.cwd or os.getcwd())
-    cfg = config.load(root)
-    paths = storage.Paths(root, document_rel=cfg["document"])
-    return root, cfg, paths, output.load_strings(cfg["language"])
+    root_cfg = config.load(root)
+    found = projects.discover(root, depth=root_cfg["discovery"]["depth"],
+                              max_dirs=root_cfg["discovery"]["max_dirs"],
+                              document_rel=root_cfg["document"])
+    name = getattr(args, "project", None)
+
+    if name is None:
+        active = projects.read_active(root, found)
+        if active is not None:
+            target = projects.Target(root, active)
+        elif not found.projects:
+            target = projects.Target(root)   # the ordinary single-project case
+        else:
+            target = None
+        candidates = list(found.projects)
+    else:
+        target, candidates = projects.resolve(root, found, name, allow_new=allow_new)
+
+    if target is None:
+        strings = output.load_strings(root_cfg["language"])
+        key = "unknown_project" if name else "which_project"
+        print(strings["cli"][key].format(name=name or ""), file=sys.stderr)
+        for project in candidates:
+            print(f"  {project.name}  ({project.rel})", file=sys.stderr)
+        return None, ENVIRONMENT
+
+    cfg = config.load(target.path, parent=root)
+    paths = storage.Paths(target.path, document_rel=cfg["document"])
+    return Ctx(root, target, cfg, paths, output.load_strings(cfg["language"]), found), OK
 
 
 def _gitignore_covers(root: Path) -> bool:
@@ -61,7 +104,10 @@ def cmd_context(args) -> int:
     If this command were long it would eat, in context, exactly what baton is
     trying to save.
     """
-    root, cfg, paths, strings = _project(args)
+    ctx, code = _resolve(args)
+    if code:
+        return code
+    root, cfg, paths, strings = ctx.target.path, ctx.cfg, ctx.paths, ctx.strings
     snap = gitinfo.snapshot(root)
     limits = cfg["limits"]
     out = [
@@ -140,7 +186,10 @@ def _minimal_escape(parsed, strings, cfg, assemble, attempts):
 
 def cmd_write(args) -> int:
     """Validate, measure, compose and write. The model NEVER writes the file."""
-    root, cfg, paths, strings = _project(args)
+    ctx, code = _resolve(args, allow_new=True)
+    if code:
+        return code
+    root, cfg, paths, strings = ctx.target.path, ctx.cfg, ctx.paths, ctx.strings
     if args.mode not in document.MODES:
         print(strings["cli"]["invalid_mode"].format(
             mode=args.mode, valid=" or ".join(document.MODES)), file=sys.stderr)
@@ -197,7 +246,10 @@ def cmd_write(args) -> int:
 
 def cmd_show(args) -> int:
     """The current handoff and what injecting it would cost."""
-    root, cfg, paths, strings = _project(args)
+    ctx, code = _resolve(args)
+    if code:
+        return code
+    root, cfg, paths, strings = ctx.target.path, ctx.cfg, ctx.paths, ctx.strings
     if not paths.document.is_file():
         print(f"baton: this project has no handoff yet ({paths.document}).\n"
               "Run /baton to create one.")
@@ -215,6 +267,45 @@ def cmd_show(args) -> int:
     print(f"  {notice}" if notice else "  freshness: up to date")
     if args.full:
         print("\n" + text)
+    return OK
+
+
+def cmd_load(args) -> int:
+    """Deliver one project's handoff and make it this session's active one.
+
+    It prints exactly what the hook would have injected: same wrapper, same
+    freshness, same repeat notice, same trim. A handoff has to carry identical
+    guarantees whether it arrived through the hook or through this command --
+    otherwise the mode instruction becomes something the model can be talked out
+    of by taking the other route.
+    """
+    ctx, code = _resolve(args)
+    if code:
+        return code
+    if not ctx.paths.document.is_file():
+        print(ctx.strings["cli"]["no_handoff_yet"].format(
+            name=ctx.target.label, path=ctx.paths.document), file=sys.stderr)
+        return ENVIRONMENT
+
+    text = ctx.paths.document.read_text(encoding="utf-8", errors="replace")
+    fields = document.read_fields(text)
+    notice = gitinfo.freshness(ctx.target.path, fields.get("date"), fields.get("branch", ""),
+                               fields.get("commit", ""), ctx.strings).notice()
+    repeat = storage.record_delivery(
+        ctx.paths, document.fingerprint(text, ctx.strings["context_section"]))
+
+    print(output.wrap(
+        body=document.extract_body(text, ctx.strings["context_section"]) or text,
+        mode=document.read_mode(text), written=fields.get("date", "?"),
+        source=ctx.target.rel, freshness_notice=notice, repeat=repeat,
+        strings=ctx.strings))
+
+    if ctx.target.is_root:
+        projects.clear_active(ctx.root)
+    else:
+        projects.set_active(ctx.root, ctx.target.project,
+                            session=os.environ.get("CLAUDE_SESSION_ID", ""))
+        print(ctx.strings["cli"]["loaded"].format(name=ctx.target.label), file=sys.stderr)
     return OK
 
 
@@ -251,7 +342,15 @@ def cmd_doctor(args) -> int:
     causes by real likelihood, starting with the one that is almost always
     right: installing the plugin without restarting Claude Code.
     """
-    root, cfg, paths, _ = _project(args)
+    ctx, code = _resolve(args)
+    if code:
+        # Several projects and none chosen: diagnose the ROOT anyway. A doctor
+        # that refuses to speak is useless precisely when something is wrong.
+        args.project = projects.ROOT_NAME
+        ctx, code = _resolve(args)
+        if code:
+            return code
+    root, cfg, paths = ctx.target.path, ctx.cfg, ctx.paths
     out = [f"baton doctor -- project: {root}", ""]
 
     hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
@@ -313,9 +412,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="baton", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def with_cwd(name, help_text, func):
+    def with_cwd(name, help_text, func, project_flag=True):
         sp = sub.add_parser(name, help=help_text)
         sp.add_argument("--cwd", default=None, help="project directory (defaults to the current one)")
+        if project_flag:
+            sp.add_argument("--project", default=None,
+                            help="which project in this root (name, relative path, or `.`)")
         sp.set_defaults(func=func)
         return sp
 
@@ -329,6 +431,9 @@ def main(argv=None) -> int:
                        help="draft path (defaults to .baton/local/draft.md)")
     show = with_cwd("show", "the current handoff and what injecting it costs", cmd_show)
     show.add_argument("--full", action="store_true", help="also print the whole document")
+    load = with_cwd("load", "deliver a project's handoff and make it active", cmd_load,
+                    project_flag=False)
+    load.add_argument("project", help="project name, relative path, or `.` for the root")
     with_cwd("doctor", "diagnose the installation and the project state", cmd_doctor)
 
     args = parser.parse_args(argv)
