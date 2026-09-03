@@ -2,10 +2,16 @@
 """CLI de baton. Lo invocan la skill y tambien tu, a mano.
 
 Subcomandos:
+  contexto  lo que el modelo necesita saber antes de redactar (breve)
+  escribir  valida el borrador, lo mide, lo compone y lo escribe
   doctor    diagnostica por que baton no esta haciendo lo que esperas
 
-Los codigos de salida son el protocolo con el modelo, no decoracion:
-  0 todo bien   1 presupuesto excedido   2 borrador invalido   3 entorno
+Los codigos de salida son el protocolo con el modelo, no decoracion, y por eso
+son distintos entre si: "no cabe" se arregla recortando y "esta mal montado" se
+arregla cambiando la forma. Con un unico codigo de error el modelo probaria la
+solucion equivocada.
+
+  0 escrito   1 presupuesto excedido   2 borrador invalido   3 entorno
 """
 from __future__ import annotations
 
@@ -20,9 +26,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import almacen  # noqa: E402
+from lib import almacen, config, documento, gitinfo, presupuesto, salida  # noqa: E402
 
 RAIZ_PLUGIN = Path(__file__).resolve().parent.parent
+
+OK, PRESUPUESTO, INVALIDO, ENTORNO = 0, 1, 2, 3
+
+#: Tres intentos y baton se hace cargo. Un contador visible corta mas bucles
+#: que cualquier instruccion, y un tope bajo evita que el modelo se atasque
+#: justo cuando ibas a cerrar la sesion.
+MAX_INTENTOS = 3
 
 
 def _edad_bitacora(rutas: almacen.Rutas):
@@ -46,6 +59,173 @@ def _plugin_habilitado() -> bool | None:
         return any(k.split("@")[0] == "baton" and v for k, v in habilitados.items())
     except Exception:
         return None
+
+
+def _contexto_de(args):
+    """Raiz, config y textos: el preambulo de casi todos los subcomandos."""
+    raiz = almacen.raiz_proyecto(args.cwd or os.getcwd())
+    cfg = config.cargar(raiz)
+    rutas = almacen.Rutas(raiz, documento_rel=cfg["documento"])
+    textos = salida.cargar_textos()
+    return raiz, cfg, rutas, textos
+
+
+def cmd_contexto(args) -> int:
+    """Lo que el modelo necesita ANTES de redactar. Corto a proposito.
+
+    Si este comando fuera largo, se comeria en el contexto justo lo que baton
+    intenta ahorrar.
+    """
+    raiz, cfg, rutas, textos = _contexto_de(args)
+    s = gitinfo.snapshot(raiz)
+    out = [f"proyecto: {raiz}", f"documento: {rutas.documento}",
+           f"borrador: escribe SOLO el cuerpo en {rutas.borrador}"]
+
+    t = cfg["topes"]
+    out.append(f"presupuesto: {t['lineas']} lineas / {t['caracteres']} caracteres (todo el documento)")
+    out.append("secciones validas: " + ", ".join(textos["secciones"].values()))
+    out.append(f"obligatoria: {textos['secciones'][textos['seccion_obligatoria']]}"
+               " -- las demas, solo si aplican (nunca escribas 'ninguno')")
+    out.append("")
+    out.append("contexto de git (lo pone baton, no lo escribas tu):")
+    out += ["  " + l for l in gitinfo.bloque_contexto(s).split("\n")]
+
+    if rutas.documento.is_file():
+        try:
+            actual = rutas.documento.read_text(encoding="utf-8", errors="replace")
+            m = presupuesto.medir(actual)
+            campos = documento.leer_campos(actual)
+            out.append("")
+            out.append(f"traspaso actual: modo {documento.leer_modo(actual)}, "
+                       f"{m.lineas} lineas, escrito {campos.get('fecha', '?')}")
+        except OSError:
+            pass
+    else:
+        out.append("")
+        out.append("traspaso actual: no hay. Este /baton activa baton en este proyecto.")
+
+    if s.hay_git and not _gitignore_cubre(raiz):
+        out.append("")
+        out.append("falta en .gitignore (una linea):  .baton/local/")
+
+    for aviso in cfg.avisos:
+        out.append(f"aviso de config: {aviso}")
+
+    print("\n".join(out))
+    return OK
+
+
+def _gitignore_cubre(raiz: Path) -> bool:
+    try:
+        texto = (raiz / ".gitignore").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(l.strip().rstrip("/") == ".baton/local" for l in texto.split("\n"))
+
+
+def _intentos(rutas: almacen.Rutas, huella: str) -> int:
+    """Cuantas veces seguidas ha fallado ESTE borrador por presupuesto."""
+    try:
+        datos = json.loads(rutas.intentos.read_text(encoding="utf-8"))
+        if datos.get("huella") != huella:
+            return 0
+        if (datetime.now(timezone.utc)
+                - datetime.strptime(datos["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                ) > timedelta(minutes=30):
+            return 0  # una sesion vieja no arrastra intentos a la de hoy
+        return int(datos.get("intentos", 0))
+    except Exception:
+        return 0
+
+
+def _anotar_intento(rutas: almacen.Rutas, huella: str, n: int) -> None:
+    try:
+        rutas.asegurar_local()
+        rutas.intentos.write_text(json.dumps(
+            {"huella": huella, "intentos": n, "ts": almacen.ahora_utc()}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def cmd_escribir(args) -> int:
+    """Valida, mide, compone y escribe. El modelo NUNCA escribe el fichero."""
+    raiz, cfg, rutas, textos = _contexto_de(args)
+    if args.modo not in documento.MODOS:
+        print(f"baton: modo invalido '{args.modo}'. Usa: {' o '.join(documento.MODOS)}",
+              file=sys.stderr)
+        return INVALIDO
+
+    ruta_borrador = Path(args.borrador) if args.borrador else rutas.borrador
+    try:
+        crudo = ruta_borrador.read_text(encoding="utf-8")
+    except OSError:
+        print(f"baton: no encuentro el borrador en {ruta_borrador}.\n"
+              f"Escribe ahi SOLO el cuerpo del traspaso (con Write) y repite el comando.",
+              file=sys.stderr)
+        return INVALIDO
+
+    parte = documento.validar_borrador(crudo, modo=args.modo, textos=textos)
+    if not parte.valido:
+        print("baton: el borrador no cumple el contrato. No se ha escrito nada.",
+              file=sys.stderr)
+        for e in parte.errores:
+            print(f"  - {e}", file=sys.stderr)
+        return INVALIDO
+
+    s = gitinfo.snapshot(raiz)
+    def _montar(cuerpo):
+        return documento.componer(
+            cuerpo=cuerpo, modo=args.modo, fecha=gitinfo.ahora_iso(),
+            rama=s.rama, commit=s.commit,
+            contexto=gitinfo.bloque_contexto(s), textos=textos)
+
+    final = _montar(parte.cuerpo)
+    veredicto = presupuesto.evaluar(final, cfg["topes"])
+
+    if not veredicto.cabe:
+        huella_borrador = documento.huella(final, textos["seccion_contexto"])
+        intento = _intentos(rutas, huella_borrador) + 1
+        if intento < MAX_INTENTOS:
+            _anotar_intento(rutas, huella_borrador, intento)
+            print(presupuesto.informe(veredicto, parte.cuerpo, intento, MAX_INTENTOS,
+                                      str(rutas.documento)), file=sys.stderr)
+            return PRESUPUESTO
+        # Ultimo recurso: un minimo honesto y declarado, cortado por lineas
+        # completas. Nunca una frase a medias fingiendo estar entera.
+        final = _escape_minimo(parte, args.modo, s, textos, cfg, _montar, intento)
+
+    try:
+        almacen.escribir_documento(rutas, final, historial_max=cfg["historial_max"])
+    except almacen.OcupadoError as exc:
+        print(f"baton: {exc}", file=sys.stderr)
+        return ENTORNO
+    except almacen.EntornoError as exc:
+        print(f"baton: {exc}", file=sys.stderr)
+        return ENTORNO
+
+    m = presupuesto.medir(final)
+    print(f"baton: traspaso escrito en {rutas.documento}\n"
+          f"  modo {args.modo} - {m.lineas}/{cfg['topes']['lineas']} lineas, "
+          f"{m.caracteres}/{cfg['topes']['caracteres']} caracteres (~{m.tokens} tokens)")
+    return OK
+
+
+def _escape_minimo(parte, modo, s, textos, cfg, montar, intentos):
+    """Compone un traspaso minimo cuando el borrador no cabe tras N intentos.
+
+    Se queda con la seccion obligatoria, recortada por LINEAS COMPLETAS, y lo
+    declara dentro del propio documento. Es truncar, si -- pero truncar
+    diciendolo, que es lo contrario de dejar una frase a medias con aspecto de
+    estar entera.
+    """
+    slug = textos["seccion_obligatoria"]
+    canonica, contenido = parte.secciones[slug]
+    marca = textos["marca_recorte_escritura"].format(intentos=intentos)
+    fijo = len(montar(f"## {canonica}\n\n{marca}\n"))
+    margen_c = max(cfg["topes"]["caracteres"] - fijo, 200)
+    margen_l = max(cfg["topes"]["lineas"] - len(montar("## x\n").split("\n")) - 2, 3)
+    recortado, _ = presupuesto.recortar_por_lineas(contenido, margen_c, margen_l)
+    return montar(f"## {canonica}\n{recortado.rstrip()}\n\n{marca}\n")
 
 
 def cmd_doctor(args) -> int:
@@ -115,9 +295,20 @@ def cmd_doctor(args) -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="baton", description=__doc__)
     sub = parser.add_subparsers(dest="comando", required=True)
-    p = sub.add_parser("doctor", help="diagnostica la instalacion y el estado del proyecto")
-    p.add_argument("--cwd", default=None, help="directorio del proyecto (por defecto, el actual)")
-    p.set_defaults(func=cmd_doctor)
+    def con_cwd(nombre, ayuda, func):
+        sp = sub.add_parser(nombre, help=ayuda)
+        sp.add_argument("--cwd", default=None, help="directorio del proyecto (por defecto, el actual)")
+        sp.set_defaults(func=func)
+        return sp
+
+    con_cwd("contexto", "lo que el modelo necesita antes de redactar", cmd_contexto)
+    esc = con_cwd("escribir", "valida el borrador y escribe el traspaso", cmd_escribir)
+    # Sin `choices`: el modo lo valida cmd_escribir, que puede explicar la
+    # diferencia entre los dos en vez de soltar un error de argparse.
+    esc.add_argument("--modo", required=True,
+                     help="continuacion (hay tarea a medias) o memoria (solo contexto)")
+    esc.add_argument("--borrador", default=None, help="ruta del borrador (por defecto, .baton/local/borrador.md)")
+    con_cwd("doctor", "diagnostica la instalacion y el estado del proyecto", cmd_doctor)
     args = parser.parse_args(argv)
     return args.func(args)
 

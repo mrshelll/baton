@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import almacen  # noqa: E402
+from lib import almacen, config, documento, gitinfo, salida  # noqa: E402
 
 
 def _leer_entrada() -> dict:
@@ -66,9 +66,53 @@ def _raiz(entrada: dict) -> Path:
 # Cada uno devuelve (carga_de_salida, resultado_para_la_bitacora).
 
 def _session_start(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:
-    if not almacen.esta_activado(rutas.raiz):
+    """Inyecta el traspaso al arrancar la sesion.
+
+    Si no hay documento, silencio absoluto: es el caso mayoritario del mundo
+    -todo proyecto donde nunca se uso /baton- y no puede ser ruido.
+    """
+    cfg = config.cargar(rutas.raiz)
+    rutas = almacen.Rutas(rutas.raiz, documento_rel=cfg["documento"])
+    if not rutas.documento.is_file():
         return {}, "silencio: proyecto sin activar"
-    return {}, "pendiente: inyeccion no implementada"
+
+    origen = entrada.get("source") or "startup"
+    if origen not in cfg["inyectar_en"]:
+        return {}, f"silencio: '{origen}' no esta en inyectar_en"
+
+    texto = rutas.documento.read_text(encoding="utf-8", errors="replace")
+    modo = documento.leer_modo(texto)
+    campos = documento.leer_campos(texto)
+    textos = salida.cargar_textos()
+
+    aviso = gitinfo.frescura(rutas.raiz, campos.get("fecha"),
+                             campos.get("rama", ""), campos.get("commit", "")).aviso()
+
+    # Una compactacion no es una sesion nueva: si contara, el aviso de "esto ya
+    # te lo entregue" saltaria por algo que el usuario no hizo.
+    repetido = almacen.registrar_entrega(
+        rutas, documento.huella(texto, textos["seccion_contexto"]),
+        cuenta=(origen != "compact"),
+    )
+
+    contexto = salida.envolver(
+        documento=documento.extraer_cuerpo(texto, textos["seccion_contexto"]) or texto,
+        modo=modo, escrito=campos.get("fecha", "?"),
+        origen=str(rutas.documento.relative_to(rutas.raiz)),
+        aviso_frescura=aviso, repetido=repetido, textos=textos,
+    )
+
+    carga = {"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                    "additionalContext": contexto}}
+    if cfg["recibo"]:
+        # El recibo es lo mas barato que convierte un fallo silencioso en uno
+        # visible: si no aparece esta linea, el hook no disparo.
+        n = len(contexto.split("\n"))
+        carga["systemMessage"] = (
+            f"baton: traspaso inyectado -- modo {modo}, {n} lineas"
+            + (", con aviso de frescura" if aviso else "")
+        )
+    return carga, f"inyectado modo {modo}"
 
 
 def _post_compact(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:

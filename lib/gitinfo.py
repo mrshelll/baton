@@ -98,7 +98,13 @@ def snapshot(raiz) -> Snapshot:
     sucios = []
     for entrada in crudo.split("\0"):
         if len(entrada) > 3:
-            sucios.append(entrada[3:])
+            nombre = entrada[3:]
+            # Los ficheros del propio baton no son trabajo del usuario. Sin
+            # esto, cada traspaso empezaria informando de que baton ha escrito
+            # un traspaso: ruido garantizado en todos ellos.
+            if nombre == ".baton/" or nombre.startswith(".baton/"):
+                continue
+            sucios.append(nombre)
 
     adelanto = ""
     conteo = _git(raiz, "rev-list", "--count", "--left-right", "@{upstream}...HEAD")
@@ -172,10 +178,12 @@ class Frescura:
         if not self.hay_git:
             if not viejo:
                 return ""
+            # Mismo prefijo que los demas avisos: un solo marcador que
+            # buscar, en vez de tres redacciones que dicen lo mismo.
             return (
-                f"[baton] Este proyecto no es un repositorio git (o git no esta "
-                f"disponible), asi que solo puedo decirte la edad: el traspaso se "
-                f"escribio hace {self.dias:.0f} dias."
+                f"[baton] Aviso de frescura: este proyecto no es un repositorio git "
+                f"(o git no esta disponible), asi que solo puedo decirte la edad: el "
+                f"traspaso se escribio hace {self.dias:.0f} dias."
             )
 
         cambio_rama = self.rama_doc not in ("", SIN_GIT) and self.rama_doc != self.rama_actual

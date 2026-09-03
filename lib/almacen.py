@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -58,10 +61,12 @@ class Rutas:
     """Las rutas de baton dentro de un proyecto. Solo las calcula; no crea nada
     salvo que se lo pidas explicitamente."""
 
-    def __init__(self, raiz, nombre_documento: str = "TRASPASO.md"):
+    def __init__(self, raiz, documento_rel: str = ".baton/TRASPASO.md"):
         self.raiz = Path(raiz)
+        self.documento = self.raiz / documento_rel
+        # Lo volatil cuelga SIEMPRE de .baton/local/, aunque el documento se
+        # haya movido a otro sitio: asi el .gitignore sigue siendo una linea.
         self.baton = self.raiz / ".baton"
-        self.documento = self.baton / nombre_documento
         self.local = self.baton / "local"
         self.historial = self.local / "historial"
         self.auto = self.local / "auto"
@@ -121,3 +126,177 @@ def anotar(rutas: Rutas, evento: str, resultado: str, **extra) -> None:
         os.replace(tmp, rutas.bitacora)
     except Exception:
         pass
+
+
+# --- escritura del documento ----------------------------------------------
+
+#: Un lock huerfano (proceso muerto, portatil suspendido) no puede dejar el
+#: proyecto bloqueado para siempre. Pasado este tiempo se considera basura.
+LOCK_CADUCA_SEGUNDOS = 60
+
+#: Solo se borran del historial los ficheros que casan EXACTAMENTE con esto.
+#: Si alguien deja sus propias notas ahi, baton no las toca.
+RE_HISTORIAL = re.compile(r"^TRASPASO-\d{8}T\d{6}Z-(continuacion|memoria)(?:-\d+)?\.md$")
+
+
+class OcupadoError(RuntimeError):
+    """Otra sesion esta escribiendo el traspaso ahora mismo."""
+
+
+class EntornoError(RuntimeError):
+    """No se puede escribir: permisos, disco, ruta imposible."""
+
+
+class _Lock:
+    """Lock por fichero, con caducidad.
+
+    O_CREAT|O_EXCL es atomico en POSIX y en Windows, asi que dos procesos no
+    pueden crearlo a la vez. La caducidad existe porque un lock sin ella
+    convierte cualquier proceso muerto en un bloqueo permanente.
+    """
+
+    def __init__(self, ruta: Path):
+        self.ruta = ruta
+        self._mio = False
+
+    def __enter__(self):
+        try:
+            self.ruta.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise EntornoError(f"no puedo crear {self.ruta.parent}: {exc}") from exc
+        for intento in (1, 2):
+            try:
+                fd = os.open(self.ruta, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.write(fd, str(os.getpid()).encode())
+                os.close(fd)
+                self._mio = True
+                return self
+            except FileExistsError:
+                if intento == 2:
+                    raise OcupadoError(
+                        "otra sesion esta escribiendo el traspaso; vuelve a intentarlo"
+                    )
+                try:
+                    edad = time.time() - self.ruta.stat().st_mtime
+                except OSError:
+                    edad = 0
+                if edad <= LOCK_CADUCA_SEGUNDOS:
+                    raise OcupadoError(
+                        "otra sesion esta escribiendo el traspaso; vuelve a intentarlo"
+                    )
+                self.ruta.unlink(missing_ok=True)  # lock caducado: se roba
+            except OSError as exc:
+                raise EntornoError(f"no puedo bloquear {self.ruta}: {exc}") from exc
+        return self
+
+    def __exit__(self, *exc):
+        if self._mio:
+            try:
+                self.ruta.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return False
+
+
+def _nombre_historial(modo: str, cuando=None) -> str:
+    """UTC a proposito: el orden alfabetico es el cronologico, sin sorpresas
+    por husos horarios ni por el cambio de hora."""
+    marca = (cuando or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+    return f"TRASPASO-{marca}-{modo}.md"
+
+
+def _rotar(rutas: "Rutas", historial_max: int) -> None:
+    """Archiva el documento ACTUAL antes de sustituirlo.
+
+    El modo del nombre se lee del fichero que se archiva, no del que va a
+    entrar: quien busca "el ultimo traspaso de continuacion" quiere el modo con
+    el que se escribio aquel, no el del que lo reemplaza.
+    """
+    if historial_max <= 0 or not rutas.documento.is_file():
+        return
+    from lib import documento as _doc
+    try:
+        modo = _doc.leer_modo(rutas.documento.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        modo = _doc.MODO_SEGURO
+    rutas.historial.mkdir(parents=True, exist_ok=True)
+    base = _nombre_historial(modo)
+    destino = rutas.historial / base
+    sufijo = 2
+    while destino.exists():  # dos rotaciones en el mismo segundo
+        destino = rutas.historial / f"{base[:-3]}-{sufijo}.md"
+        sufijo += 1
+    shutil.copy2(rutas.documento, destino)
+    _podar(rutas, historial_max)
+
+
+def _podar(rutas: "Rutas", historial_max: int) -> None:
+    mios = sorted(p for p in rutas.historial.glob("*.md") if RE_HISTORIAL.match(p.name))
+    for viejo in mios[:-historial_max] if historial_max else mios:
+        try:
+            viejo.unlink()
+        except OSError:
+            pass
+
+
+def escribir_documento(rutas: "Rutas", contenido: str, historial_max: int = 10) -> Path:
+    """Escribe el traspaso de forma atomica, rotando el anterior.
+
+    El orden importa: nada se toca hasta que el contenido esta listo, y el
+    fichero final aparece de una vez con os.replace(). Un lector concurrente ve
+    el documento viejo entero o el nuevo entero, nunca uno a medias.
+    """
+    with _Lock(rutas.lock):
+        try:
+            rutas.documento.parent.mkdir(parents=True, exist_ok=True)
+            _rotar(rutas, historial_max)
+            tmp = rutas.documento.with_name(f".{rutas.documento.name}.tmp-{os.getpid()}")
+            tmp.write_text(contenido, encoding="utf-8")
+            os.replace(tmp, rutas.documento)
+        except OSError as exc:
+            raise EntornoError(f"no puedo escribir {rutas.documento}: {exc}") from exc
+        try:
+            rutas.borrador.unlink(missing_ok=True)
+            rutas.intentos.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return rutas.documento
+
+
+# --- registro de entregas -------------------------------------------------
+
+def registrar_entrega(rutas: "Rutas", huella: str, cuenta: bool = True):
+    """Lleva la cuenta de cuantas veces se ha entregado ESTE traspaso.
+
+    Sirve para poder decirle al modelo "esto ya te lo di 3 veces": sin ese
+    aviso, un traspaso que nadie ha reemplazado parece novedad en cada sesion y
+    el modelo repite trabajo ya hecho.
+
+    Nunca destruye la nota al leerla. Muchas sesiones arrancan y terminan sin
+    escribir un traspaso nuevo -- una invocacion de un solo tiro, por ejemplo-,
+    y consumir la nota ahi dejaria sin contexto a la siguiente sesion humana.
+
+    Devuelve None la primera vez, o {"veces": N, "cuando": "..."} si repite.
+    """
+    try:
+        datos = json.loads(rutas.entregas.read_text(encoding="utf-8"))
+    except Exception:
+        datos = {}
+    if datos.get("huella") != huella:
+        datos = {"huella": huella, "veces": 0, "primera": ahora_utc(), "ultima": ""}
+
+    previas = int(datos.get("veces") or 0)
+    anterior = datos.get("ultima") or datos.get("primera") or ""
+
+    if cuenta:
+        datos["veces"] = previas + 1
+        datos["ultima"] = ahora_utc()
+        try:
+            rutas.asegurar_local()
+            rutas.entregas.write_text(json.dumps(datos), encoding="utf-8")
+        except OSError:
+            pass
+
+    if previas <= 0:
+        return None
+    return {"veces": previas, "cuando": anterior or "antes"}

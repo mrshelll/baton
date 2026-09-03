@@ -136,3 +136,13 @@ class TestFrescura(CasoBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNoSeCuentaASiMismo(CasoBase):
+    def test_los_ficheros_de_baton_no_son_trabajo_del_usuario(self):
+        self.init_git()
+        (self.proyecto / ".baton" / "local").mkdir(parents=True)
+        (self.proyecto / ".baton" / "TRASPASO.md").write_text("x", encoding="utf-8")
+        (self.proyecto / "codigo.py").write_text("y", encoding="utf-8")
+        s = gitinfo.snapshot(self.proyecto)
+        self.assertEqual(s.sucios, ["codigo.py"])
