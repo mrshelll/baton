@@ -310,8 +310,10 @@ Exit codes are unchanged in meaning. An unresolvable or ambiguous project is
 Every human-visible string added here lives in `templates/en.json` and
 `templates/es.json`: the index header and instruction, the per-project line
 format, the relative ages ("9 h ago", "3 d ago"), the candidate list, the
-"which project?" question and the new `doctor` lines. Nothing in the code, same
-as today. The `baton-index` tag name and the config keys stay English in both.
+"which project?" question. Nothing in the code, same as today -- with the one
+exception the codebase already makes: `doctor`'s lines are hardcoded English,
+because it is a diagnostic for whoever is debugging an install, and its new
+lines follow that convention rather than breaking it. The `baton-index` tag name and the config keys stay English in both.
 
 ## 11. Compatibility
 
