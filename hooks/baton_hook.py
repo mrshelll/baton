@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import config, document, gitinfo, output, storage  # noqa: E402
+from lib import config, document, gitinfo, output, projects, storage  # noqa: E402
 
 
 def _read_input() -> dict:
@@ -51,16 +51,31 @@ def _emit(payload: dict) -> None:
 # Each one receives an already-enabled project and returns
 # (output_payload, result_for_the_log).
 
-def _session_start(entry: dict, paths: storage.Paths, cfg) -> tuple[dict, str]:
-    """Inject the handoff when the session starts."""
+def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, str]:
+    """Inject the handoff, the index, or both."""
     source = entry.get("source") or "startup"
     if source not in cfg["inject_on"]:
         return {}, f"silent: '{source}' is not in inject_on"
 
+    strings = output.load_strings(cfg["language"])
+
+    index = ""
+    if found.projects:
+        cards = [projects.describe(p, cfg["document"]) for p in found.projects]
+        index = output.index_block(root, cards, strings, truncated=found.truncated)
+
+    if not paths.document.is_file():
+        # Only the index: this root holds projects but has no handoff of its own.
+        payload = {"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                          "additionalContext": index}}
+        if cfg["receipt"]:
+            payload["systemMessage"] = (
+                f"baton: {len(found.projects)} project(s) available, none loaded")
+        return payload, f"index injected: {len(found.projects)} projects"
+
     text = paths.document.read_text(encoding="utf-8", errors="replace")
     mode = document.read_mode(text)
     fields = document.read_fields(text)
-    strings = output.load_strings(cfg["language"])
 
     notice = gitinfo.freshness(paths.root, fields.get("date"), fields.get("branch", ""),
                                fields.get("commit", ""), strings).notice()
@@ -76,7 +91,7 @@ def _session_start(entry: dict, paths: storage.Paths, cfg) -> tuple[dict, str]:
         body=document.extract_body(text, strings["context_section"]) or text,
         mode=mode, written=fields.get("date", "?"),
         source=str(paths.document.relative_to(paths.root)),
-        freshness_notice=notice, repeat=repeat, strings=strings,
+        freshness_notice=notice, repeat=repeat, strings=strings, index=index,
     )
 
     payload = {"hookSpecificOutput": {"hookEventName": "SessionStart",
@@ -87,11 +102,12 @@ def _session_start(entry: dict, paths: storage.Paths, cfg) -> tuple[dict, str]:
         payload["systemMessage"] = (
             f"baton: handoff injected -- {mode} mode, {len(context.splitlines())} lines"
             + (", with a freshness notice" if notice else "")
+            + (f", plus {len(found.projects)} project(s) in the index" if index else "")
         )
     return payload, f"injected {mode} mode"
 
 
-def _post_compact(entry: dict, paths: storage.Paths, cfg) -> tuple[dict, str]:
+def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, str]:
     """Save the compaction summary and arm the flag. Nothing else.
 
     Nothing can be drafted here: a compaction has no model turn, and the binary
@@ -109,7 +125,7 @@ def _post_compact(entry: dict, paths: storage.Paths, cfg) -> tuple[dict, str]:
     return {}, "summary saved, handoff pending"
 
 
-def _stop(entry: dict, paths: storage.Paths, cfg) -> tuple[dict, str]:
+def _stop(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, str]:
     """Ask for the handoff, but only at the right moment.
 
     That moment is right after a compaction: the context has just been emptied,
@@ -172,14 +188,22 @@ def main() -> int:
         paths = storage.Paths(root)
         cfg = config.load(root)
         paths = storage.Paths(root, document_rel=cfg["document"])
+        found = projects.discover(root, depth=cfg["discovery"]["depth"],
+                                  max_dirs=cfg["discovery"]["max_dirs"],
+                                  document_rel=cfg["document"])
 
-        if not paths.document.is_file():
+        # Before the inject_on filter, not after: a root whose config drops
+        # `startup` must still not carry yesterday's active project into today.
+        if event == "session-start" and (entry.get("source") or "startup") in ("startup", "clear"):
+            projects.clear_active(root)
+
+        if not paths.document.is_file() and not found.projects:
             # The majority case in the world: every project where /baton was
             # never used. It cannot be noise.
             storage.log_event(paths, event=event, result="silent: project not enabled")
             return 0
 
-        payload, result = handler(entry, paths, cfg)
+        payload, result = handler(entry, paths, cfg, root, found)
         _emit(payload)
         storage.log_event(paths, event=event, result=result,
                           source=entry.get("source") or entry.get("trigger") or "")
