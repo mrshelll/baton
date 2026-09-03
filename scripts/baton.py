@@ -77,26 +77,35 @@ def _resolve(args, allow_new: bool = False):
     name = getattr(args, "project", None)
 
     here = Path(args.cwd or os.getcwd())
+    root_enabled = storage.Paths(root, document_rel=root_cfg["document"]).document.is_file()
+    ask_where = False
+
     if name is None:
         active = projects.read_active(root, found)
         if active is not None:
             target = projects.Target(root, active)
+        elif _below(root, here) and not root_enabled:
+            # Cold start from inside a subfolder. A session standing below a root
+            # that has no handoff of its own is the one case where the folder the
+            # user opened matters more than anything on disk -- and where getting
+            # it wrong plants a .baton/ nobody wanted, which then makes that
+            # folder a root forever. Ask, once: afterwards the document exists and
+            # everything resolves on its own.
+            target, ask_where = None, True
         elif not found.projects:
             target = projects.Target(root)   # the ordinary single-project case
+        elif len(found.projects) == 1 and not root_enabled:
+            # One project and a root that is not one itself: nothing to choose
+            # between, so asking would be ceremony. Choosing among several is the
+            # only case where being wrong costs a handoff.
+            target = projects.Target(root, found.projects[0])
         else:
             target = None
         candidates = list(found.projects)
     else:
         target, candidates = projects.resolve(root, found, name, allow_new=allow_new)
 
-    # Cold start from inside a subfolder. The root has no handoff, no project has
-    # one either, and the session is standing somewhere below: claiming the root
-    # silently is how a handoff ends up in a folder nobody wanted it in, and it
-    # then makes that folder a root forever. Ask instead -- once, because after
-    # this the document exists and everything resolves on its own.
-    if (target is not None and target.is_root and name is None
-            and not storage.Paths(root, document_rel=root_cfg["document"]).document.is_file()
-            and _below(root, here)):
+    if ask_where:
         strings = output.load_strings(root_cfg["language"])
         rel = Path(here).resolve(strict=False).relative_to(Path(root).resolve(strict=False))
         print(strings["cli"]["which_target"].format(here=rel.as_posix(), root=root),
@@ -132,7 +141,11 @@ def cmd_context(args) -> int:
     If this command were long it would eat, in context, exactly what baton is
     trying to save.
     """
-    ctx, code = _resolve(args)
+    # allow_new like `write`: this command is the question that precedes it, so a
+    # project `write` could create has to be one `context` can describe. Without
+    # it the cold start dies on the first command of the skill, before there is
+    # even a draft path to answer with.
+    ctx, code = _resolve(args, allow_new=True)
     if code:
         return code
     root, cfg, paths, strings = ctx.target.path, ctx.cfg, ctx.paths, ctx.strings

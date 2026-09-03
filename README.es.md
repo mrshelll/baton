@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-294-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-299-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -296,9 +296,29 @@ recibe ese traspaso con el mismo envoltorio, el mismo aviso de frescura y el
 mismo presupuesto que habría aplicado el hook. Eso además lo marca como **el
 proyecto activo de la sesión**, así que un `/baton` a secas escribe ahí.
 
+### Tú no escribes argumentos
+
+`/baton` no lleva ninguno. El modo lo decide el modelo, y el destino sale del
+disco, en este orden:
+
+1. el proyecto cargado con `load` en esta sesión,
+2. el proyecto en el que está parada la sesión — una carpeta de proyecto tiene su
+   propio `.baton/`, así que baton se detiene ahí en vez de subir a la raíz,
+3. el único proyecto que hay, cuando la raíz no es uno.
+
+Solo quedan dos situaciones, y en las dos baton se detiene y lo dice en vez de
+adivinar — porque lo que estaría adivinando es qué traspaso se sobrescribe:
+
+- **El primer traspaso de un proyecto**, cuando nadie ha decidido todavía si
+  pertenece a la carpeta donde estás o a la raíz. Es una decisión de una sola
+  vez, una por proyecto, para siempre.
+- **Varios proyectos y ninguno cargado**, cuando la sesión nunca dijo de cuál iba.
+
+En las dos, el modelo te pregunta en una línea y pasa él la bandera. Tú contestas
+con palabras.
+
 La activación vive una sesión: un arranque nuevo la limpia, una compactación la
-conserva. Con varios proyectos y ninguno cargado, `/baton` los lista y se detiene
-en vez de adivinar — lo que se estaría adivinando es qué traspaso se sobrescribe.
+conserva.
 
 El escaneo mira **dos niveles hacia abajo** por defecto, que cubre las dos formas
 de arriba. Si tus proyectos están más hondos, se dice una vez en la config de la
@@ -434,7 +454,7 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 ./tests/run.sh
 ```
 
-294 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+299 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.

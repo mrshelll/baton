@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.4.1 — 2026-09-03
+
+The first real run of 0.4.0, in a folder with two factory projects, failed four
+different ways in one session. None of them was visible to the 288 unit tests
+that were green at the time — the same lesson 0.3.1 taught, learned again.
+
+### Fixed
+- **`--project` only accepted a full relative path**, while the index and `load`
+  both take a folder name. That contradiction is charged at the cold start, the
+  one call where nothing exists yet to list as a hint, and it is what blocked the
+  first real session.
+- **A `/baton` with the session standing inside a subfolder claimed the root in
+  silence.** That is how a `.baton/` ends up in a folder nobody wanted it in —
+  and, worse, makes that folder a root with a document of its own forever. It now
+  asks, once: afterwards the handoff exists and everything resolves on its own.
+- **The flag stopped resolving halfway through the cold start.** Writing the draft
+  creates `.baton/`, which is itself a root marker, so between `context` and
+  `write` the root moved down to the very folder that had been named. A folder
+  named by its own name now always resolves.
+- **`context` refused a project `write` would have created**, so the cold start
+  died on the first command of the skill, before there was even a draft path to
+  answer with.
+
+### Changed
+- **One project and a root that is not one: no question.** There is nothing to
+  choose between, and choosing among several is the only case where being wrong
+  costs a handoff. The folder the session is standing in still wins over it —
+  picking the only project while standing somewhere else is the same failure in
+  reverse.
+- The messages that stop a command are written as instructions to the model, not
+  to the person: ask the user in one line, then pass the flag yourself. **Nobody
+  should have to type `--project`.** Arguments were always an override; now the
+  skill, the command and both READMEs say so.
+
 ## 0.4.0 — 2026-09-03
 
 ### Added

@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-294-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-299-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -295,9 +295,29 @@ When you say which project you are working on, the model runs `baton.py load
 and the same budget the hook would have applied. That also marks it as **this
 session's active project**, so a bare `/baton` writes there.
 
+### You never type arguments
+
+`/baton` takes none. The mode is the model's decision, and the target is worked
+out from disk, in this order:
+
+1. the project loaded with `load` this session,
+2. the project the session is standing in — a project folder has its own
+   `.baton/`, so baton stops there instead of climbing to the root,
+3. the only project there is, when the root is not one itself.
+
+Only two situations are left, and in both baton stops and says so rather than
+guessing — the thing it would be guessing is which handoff gets overwritten:
+
+- **The first handoff of a project**, where nobody has decided yet whether it
+  belongs to the folder you are in or to the root. A one-time decision, once per
+  project, forever.
+- **Several projects, none loaded**, when the session never said which it was
+  about.
+
+In both, the model asks you in one line and passes the flag itself. You answer
+in words.
+
 The activation lives one session: a fresh start clears it, a compaction keeps it.
-With several projects and none loaded, `/baton` lists them and stops rather than
-guessing — the thing being guessed is which handoff gets overwritten.
 
 The scan looks **two levels down** by default, which covers both shapes above. If
 your projects sit deeper, say so once in the root's config:
@@ -435,7 +455,7 @@ Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
 ./tests/run.sh
 ```
 
-294 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+299 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case

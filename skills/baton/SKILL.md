@@ -12,17 +12,25 @@ branch, commit and git context. Do not write any of that.
 
 ## 0. Which project
 
-If the session started with a `<baton-index>` instead of a handoff, this root
-holds several projects. Do not write anything until you know which one:
+**`/baton` takes no arguments.** The user types the command and nothing else: the
+mode is your decision (step 2) and the target is baton's, resolved from disk. In
+almost every session there is nothing to do here — run `context` and carry on.
 
-- The user named one, or you already ran `baton.py load <name>` this session:
-  that is the target, and `/baton` writes there on its own.
-- Otherwise, ask in one line. Never infer it from which files were touched: in a
-  session that touched two projects, guessing overwrites a good handoff.
+The exception is a root that holds several projects. Then the commands resolve
+the target in this order, without you doing anything:
 
-Pass `--project <name>` to `context` and `write` only to override the active
-project, or to create the handoff of a project that does not have one yet — the
-folder must already exist.
+1. the project you loaded with `baton.py load <name>` this session,
+2. the project the session is standing in,
+3. the only project there is, when the root is not one itself.
+
+If none of those settle it, the command **stops and tells you so**. Only then:
+ask the user in ONE short line which project this handoff belongs to, and repeat
+the command with `--project <name>` yourself. A folder name is enough.
+
+Two rules about that question. Never work the answer out from which files the
+session touched — in a session that touched two projects, guessing wrong
+overwrites a good handoff. And never ask the user to type the flag: they answer
+in words, you pass the flag.
 
 ## 1. Ask for the context
 

@@ -244,6 +244,22 @@ class TestWriteTarget(Base):
         self.assertIn("where we are, concretely",
                       (radar / ".baton" / "HANDOFF.md").read_text(encoding="utf-8"))
 
+    def test_a_single_project_needs_no_question(self):
+        # Nothing to choose between: asking would be ceremony. Choosing among
+        # several is the only case where being wrong costs a handoff.
+        radar = self.sub("proyectos/radar")
+        self.draft(radar)
+        p = self.cli("write", "--mode", "memory")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn(str(radar), p.stdout)
+
+    def test_but_a_root_with_its_own_handoff_makes_even_one_ambiguous(self):
+        self.handoff(self.project)
+        self.sub("proyectos/radar")
+        self.draft(self.project)
+        p = self.cli("write", "--mode", "memory")
+        self.assertEqual(p.returncode, 3)
+
     def test_with_projects_and_none_active_it_refuses_and_lists_them(self):
         self.sub("proyectos/radar")
         self.sub("proyectos/instrumentos")
@@ -319,6 +335,27 @@ class TestColdStart(Base):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertTrue((self.radar / ".baton" / "HANDOFF.md").is_file())
 
+    def test_context_answers_for_a_project_that_does_not_exist_yet(self):
+        # The skill asks for the context first. If only `write` accepted a new
+        # project, the cold start would die on the first command, before there
+        # was even a draft path to answer with.
+        p = self.deep_cli(self.radar, "context", "--project", "radar-licitaciones-secop")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn(str(self.radar / ".baton" / "local" / "draft.md"), p.stdout)
+
+    def test_the_flag_survives_the_draft_moving_the_root(self):
+        # The real cold-start sequence: context --project, write the draft, then
+        # write --project. Creating the draft creates `.baton/`, which IS a root
+        # marker, so by the second command the root has moved down to the folder
+        # that was named. The flag has to keep meaning the same thing.
+        ctx = self.deep_cli(self.radar, "context", "--project", "radar-licitaciones-secop")
+        self.assertEqual(ctx.returncode, 0, ctx.stderr)
+        self.draft(self.radar)          # this is what moves the root
+        p = self.deep_cli(self.radar, "write", "--mode", "memory",
+                          "--project", "radar-licitaciones-secop")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue((self.radar / ".baton" / "HANDOFF.md").is_file())
+
     def test_an_ambiguous_folder_name_creates_nothing(self):
         (self.project / "otros" / "radar-licitaciones-secop").mkdir(parents=True)
         self.draft(self.project)
@@ -347,6 +384,21 @@ class TestColdStart(Base):
         p = self.deep_cli(self.project, "write", "--mode", "memory")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertTrue((self.project / ".baton" / "HANDOFF.md").is_file())
+
+    def test_standing_in_a_folder_beats_being_the_only_project(self):
+        # radar is the only project with a handoff, but the session is standing
+        # in a different folder. Picking radar there is the SECOP failure in
+        # reverse: one project's handoff written over another's home.
+        #
+        # Asked through `context`, which is the real sequence: the skill resolves
+        # the target before any draft exists. (Writing the draft first would move
+        # the answer, since `.baton/` is itself a root marker.)
+        self.handoff(self.radar)
+        otro = self.project / "proyectos" / "instrumentos-control"
+        p = self.deep_cli(otro, "context")
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("instrumentos-control", p.stderr)
+        self.assertNotIn("radar", p.stdout)
 
     def test_with_the_root_already_enabled_a_subfolder_writes_to_the_root(self):
         # Nothing to ask here: the root's handoff exists, so that is where a

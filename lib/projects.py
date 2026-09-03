@@ -198,6 +198,14 @@ def resolve(root, discovery: Discovery, name, allow_new: bool = False):
         if len(matches) > 1:
             return None, matches
 
+    # The root, named by its own folder name. This is not a nicety: writing the
+    # draft creates `.baton/`, which is a root marker, so between the `context`
+    # call and the `write` call the root can move down to the very folder that
+    # was named. Without this the flag stops resolving halfway through the one
+    # sequence that needs it, and the cold start cannot be completed at all.
+    if key.casefold() == root.name.casefold():
+        return Target(root), []
+
     if allow_new:
         # A path relative to the root, first: it is unambiguous by construction.
         candidate = root / key

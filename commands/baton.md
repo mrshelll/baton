@@ -14,7 +14,10 @@ If the arguments start with `memory` or `continue`, that is the mode and you do
 not have to decide it. Any remaining text is a note from the user about what they
 want captured.
 
-If this root holds several projects, a bare `/baton` writes to the session's
-active project — the one you loaded with `baton.py load`. With none active the
-CLI lists them and stops: pass the project as an argument, or ask the user. Do
-not infer it from the files the session touched.
+**Arguments are an override, never a requirement.** A bare `/baton` is the normal
+call: you decide the mode, and the CLI resolves which project it belongs to —
+the one loaded this session, the one the session is standing in, or the only one
+there is. Only when a root holds several and none of that settles it does the
+command stop and say so; then ask the user in one line and pass `--project`
+yourself. Never infer it from the files the session touched, and never ask the
+user to type a flag.
