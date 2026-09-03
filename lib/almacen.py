@@ -300,3 +300,88 @@ def registrar_entrega(rutas: "Rutas", huella: str, cuenta: bool = True):
     if previas <= 0:
         return None
     return {"veces": previas, "cuando": anterior or "antes"}
+
+
+# --- ciclo automatico: resumen de compactacion y bandera ------------------
+
+#: Cuantos resumenes de compactacion se conservan. Son material de trabajo, no
+#: un archivo historico: con los ultimos basta y el coste queda acotado.
+RESUMENES_MAX = 3
+
+
+def guardar_resumen(rutas: "Rutas", resumen: str, trigger: str = "auto") -> None:
+    """Deja el `compact_summary` en disco para que se pueda usar despues."""
+    try:
+        rutas.auto.mkdir(parents=True, exist_ok=True)
+        marca = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        destino = rutas.auto / f"resumen-{marca}.md"
+        sufijo = 2
+        while destino.exists():
+            destino = rutas.auto / f"resumen-{marca}-{sufijo}.md"
+            sufijo += 1
+        destino.write_text(
+            f"<!-- resumen de compactacion (trigger: {trigger}), guardado por baton -->\n\n"
+            + (resumen or "(la compactacion no aporto resumen)\n"),
+            encoding="utf-8")
+        guardados = sorted(rutas.auto.glob("resumen-*.md"))
+        for viejo in guardados[:-RESUMENES_MAX]:
+            viejo.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _leer_pendiente(rutas: "Rutas"):
+    try:
+        datos = json.loads(rutas.pendiente.read_text(encoding="utf-8"))
+        return datos if isinstance(datos, dict) else None
+    except Exception:
+        return None
+
+
+def armar_pendiente(rutas: "Rutas", session_id: str = "") -> None:
+    """Marca que hay una compactacion sin traspaso.
+
+    Conserva `ultima_peticion` a proposito: el cooldown mide desde la ultima
+    vez que se interrumpio al usuario, y si se borrara aqui, cada compactacion
+    nueva lo reiniciaria y el cooldown no frenaria nada.
+    """
+    datos = _leer_pendiente(rutas) or {}
+    datos.update({"armada": ahora_utc(), "session": session_id, "pedido": False})
+    try:
+        rutas.asegurar_local()
+        rutas.pendiente.write_text(json.dumps(datos), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def hay_pendiente(rutas: "Rutas", cooldown_minutos: int = 30) -> bool:
+    """True si toca pedir el traspaso.
+
+    El cooldown mide desde la ULTIMA peticion, no desde la compactacion: lo que
+    hay que evitar es interrumpir dos veces seguidas al usuario, no perder una
+    compactacion.
+    """
+    datos = _leer_pendiente(rutas)
+    if not datos or datos.get("pedido"):
+        return False
+    ultima = datos.get("ultima_peticion")
+    if ultima and cooldown_minutos:
+        try:
+            cuando = datetime.strptime(ultima, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - cuando).total_seconds() < cooldown_minutos * 60:
+                return False
+        except ValueError:
+            pass
+    return True
+
+
+def consumir_pendiente(rutas: "Rutas") -> None:
+    """Marca la bandera como usada. Como mucho una peticion por compactacion."""
+    datos = _leer_pendiente(rutas) or {}
+    datos["pedido"] = True
+    datos["ultima_peticion"] = ahora_utc()
+    try:
+        rutas.asegurar_local()
+        rutas.pendiente.write_text(json.dumps(datos), encoding="utf-8")
+    except OSError:
+        pass

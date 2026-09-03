@@ -228,6 +228,31 @@ def _escape_minimo(parte, modo, s, textos, cfg, montar, intentos):
     return montar(f"## {canonica}\n{recortado.rstrip()}\n\n{marca}\n")
 
 
+def cmd_ver(args) -> int:
+    """Muestra el traspaso actual y lo que costaria inyectarlo."""
+    raiz, cfg, rutas, textos = _contexto_de(args)
+    if not rutas.documento.is_file():
+        print(f"baton: este proyecto no tiene traspaso todavia ({rutas.documento}).\n"
+              "Corre /baton para crearlo.")
+        return OK
+    texto = rutas.documento.read_text(encoding="utf-8", errors="replace")
+    m = presupuesto.medir(texto)
+    campos = documento.leer_campos(texto)
+    modo = documento.leer_modo(texto)
+    fresco = gitinfo.frescura(raiz, campos.get("fecha"), campos.get("rama", ""),
+                              campos.get("commit", ""))
+    print(f"{rutas.documento}")
+    print(f"  modo {modo} - {m.lineas}/{cfg['topes']['lineas']} lineas, "
+          f"{m.caracteres}/{cfg['topes']['caracteres']} caracteres (~{m.tokens} tokens)")
+    print(f"  escrito {campos.get('fecha', '?')} en `{campos.get('rama', '?')}` "
+          f"@ {campos.get('commit', '?')}")
+    aviso = fresco.aviso()
+    print(f"  {aviso}" if aviso else "  frescura: al dia")
+    if args.completo:
+        print("\n" + texto)
+    return OK
+
+
 def cmd_doctor(args) -> int:
     """Un hook que no dispara no da error: no da nada.
 
@@ -266,14 +291,15 @@ def cmd_doctor(args) -> int:
         lineas.append("  [--] plugin                 no pude leer ~/.claude/settings.json")
 
     lineas.append("")
-    if not almacen.esta_activado(raiz):
+    rutas_cfg = almacen.Rutas(raiz, documento_rel=config.cargar(raiz)["documento"])
+    if not rutas_cfg.documento.is_file():
         lineas.append("  Este proyecto aun no usa baton.")
         lineas.append("  Corre /baton una vez para activarlo aqui; hasta entonces los hooks callan")
         lineas.append("  a proposito, y eso NO es un fallo.")
         print("\n".join(lineas))
         return 0
 
-    lineas.append(f"  Documento: {rutas.documento}")
+    lineas.append(f"  Documento: {rutas_cfg.documento}")
     ts, horas = _edad_bitacora(rutas)
     if ts is None:
         lineas.append("")
@@ -308,6 +334,8 @@ def main(argv=None) -> int:
     esc.add_argument("--modo", required=True,
                      help="continuacion (hay tarea a medias) o memoria (solo contexto)")
     esc.add_argument("--borrador", default=None, help="ruta del borrador (por defecto, .baton/local/borrador.md)")
+    ver = con_cwd("ver", "muestra el traspaso actual y lo que cuesta inyectarlo", cmd_ver)
+    ver.add_argument("--completo", action="store_true", help="imprime tambien el documento entero")
     con_cwd("doctor", "diagnostica la instalacion y el estado del proyecto", cmd_doctor)
     args = parser.parse_args(argv)
     return args.func(args)

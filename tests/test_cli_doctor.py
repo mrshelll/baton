@@ -49,3 +49,29 @@ class TestDoctor(CasoBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVer(CasoBase):
+    def ver(self, *extra):
+        import subprocess, sys
+        from tests.ayudas import RAIZ_REPO, _sin_locale
+        return subprocess.run(
+            [sys.executable, str(RAIZ_REPO / "scripts" / "baton.py"), "ver",
+             "--cwd", str(self.proyecto), *extra],
+            capture_output=True, text=True, env=_sin_locale(), timeout=30)
+
+    def test_sin_traspaso_lo_dice_sin_fallar(self):
+        p = self.ver()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("no tiene traspaso", p.stdout)
+
+    def test_resume_modo_tamano_y_frescura(self):
+        d = self.proyecto / ".baton"
+        d.mkdir(parents=True)
+        (d / "TRASPASO.md").write_text(
+            "---\nbaton: 1\nmodo: continuacion\nfecha: 2020-01-01T00:00:00Z\n"
+            "rama: main\ncommit: abc1234\n---\n\n## Estado\nx\n", encoding="utf-8")
+        p = self.ver()
+        self.assertIn("modo continuacion", p.stdout)
+        self.assertIn("lineas", p.stdout)
+        self.assertIn("frescura", p.stdout.lower())

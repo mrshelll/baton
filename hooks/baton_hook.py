@@ -116,15 +116,69 @@ def _session_start(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:
 
 
 def _post_compact(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:
-    if not almacen.esta_activado(rutas.raiz):
+    """Guarda el resumen de la compactacion y arma la bandera. Nada mas.
+
+    Aqui no se puede redactar: en la compactacion no hay turno de modelo, y el
+    propio binario lo dice al rechazar los hooks de tipo `prompt` -- "no
+    conversation context is available". Lo que si hay es `compact_summary`, el
+    resumen que el harness acaba de producir. Se guarda como INSUMO para que el
+    siguiente Stop pida un traspaso redactado de verdad.
+
+    Y no toca el traspaso. Jamas: un resumen que nadie redacto no puede pisar
+    uno escrito con criterio.
+    """
+    cfg = config.cargar(rutas.raiz)
+    rutas = almacen.Rutas(rutas.raiz, documento_rel=cfg["documento"])
+    if not rutas.documento.is_file():
         return {}, "silencio: proyecto sin activar"
-    return {}, "pendiente: captura no implementada"
+
+    resumen = entrada.get("compact_summary") or ""
+    almacen.guardar_resumen(rutas, resumen, trigger=entrada.get("trigger") or "auto")
+    almacen.armar_pendiente(rutas, entrada.get("session_id") or "")
+    return ({}, "resumen guardado y traspaso pendiente")
 
 
 def _stop(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:
-    if not almacen.esta_activado(rutas.raiz):
+    """Pide el traspaso, pero solo en el momento correcto.
+
+    Ese momento es justo despues de una compactacion: el contexto se acaba de
+    vaciar, asi que redactar es lo mas barato de toda la sesion. Hacerlo antes,
+    al 70-80 % de la ventana, saldria caro y ademas la propia redaccion podria
+    disparar la compactacion que se intentaba anticipar.
+
+    Cuatro puertas antes de interrumpir a nadie: proyecto activado, bandera
+    armada, `stop_hook_active` falso (anti-bucle del harness) y cooldown.
+    """
+    cfg = config.cargar(rutas.raiz)
+    rutas = almacen.Rutas(rutas.raiz, documento_rel=cfg["documento"])
+    if not rutas.documento.is_file():
         return {}, "silencio: proyecto sin activar"
-    return {}, "pendiente: peticion no implementada"
+
+    if entrada.get("stop_hook_active"):
+        return {}, "silencio: ya estamos dentro de un Stop bloqueado"
+
+    if not almacen.hay_pendiente(rutas, cfg["cooldown_minutos"]):
+        return {}, "silencio: nada pendiente"
+
+    # Se consume ANTES de pedirlo: si algo falla despues, como mucho se pierde
+    # una peticion. Al reves se pediria en bucle, que es mucho peor.
+    almacen.consumir_pendiente(rutas)
+
+    return ({
+        "decision": "block",
+        "reason": (
+            "baton: esta sesion acaba de compactarse, asi que el resumen de la "
+            "compactacion sigue fresco en tu contexto y es el mejor momento para "
+            "dejar el traspaso al dia.\n\n"
+            "Escribe ahora el traspaso siguiendo la skill `baton`: pide el contexto "
+            "con `baton.py contexto`, redacta SOLO el cuerpo en el borrador y "
+            "escribelo con `baton.py escribir --modo <memoria|continuacion>`. "
+            "Destila el resumen, no lo copies: hay un presupuesto y se valida.\n\n"
+            "Cuando termines, retoma lo que estabas haciendo o sigue esperando al "
+            "usuario, segun corresponda. baton no volvera a pedirtelo por esta "
+            "compactacion."
+        ),
+    }, "traspaso pedido tras compactacion")
 
 
 MANEJADORES = {
