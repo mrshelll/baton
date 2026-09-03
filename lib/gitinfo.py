@@ -35,7 +35,8 @@ PREFIJO_PROPIO = ".baton/"
 
 
 def _es_propio(nombre: str) -> bool:
-    return nombre == PREFIJO_PROPIO or nombre.startswith(PREFIJO_PROPIO)
+    return nombre.startswith(PREFIJO_PROPIO)
+
 
 SIN_GIT = "sin-git"
 
@@ -86,44 +87,48 @@ class Snapshot:
     adelanto: str = ""
 
 
+def _cabeza(raiz) -> tuple[str, str, str]:
+    """(commit, asunto, fecha) del ultimo commit."""
+    salida = _git(raiz, "log", "-1", "--format=%h%x00%s%x00%cs")
+    if not salida:
+        # Repo recien iniciado: hay git, pero todavia no hay historia.
+        return "sin-commits", "", ""
+    partes = (salida.strip("\n").split("\0") + ["", "", ""])[:3]
+    return partes[0], partes[1], partes[2]
+
+
+def _sucios(raiz) -> list:
+    """Ficheros sin commitear, sin contar los del propio baton.
+
+    -z + separacion por NUL: los nombres con espacios, tildes o saltos de linea
+    dejan de ser un caso especial.
+    """
+    crudo = _git(raiz, "status", "--porcelain=v1", "-z") or ""
+    return [e[3:] for e in crudo.split("\0") if len(e) > 3 and not _es_propio(e[3:])]
+
+
+def _adelanto(raiz) -> str:
+    """Como estamos respecto al upstream. Cadena vacia si no hay upstream."""
+    conteo = _git(raiz, "rev-list", "--count", "--left-right", "@{upstream}...HEAD")
+    if not conteo or "\t" not in conteo:
+        return ""
+    detras, delante = conteo.strip().split("\t")[:2]
+    trozos = []
+    if delante != "0":
+        trozos.append(f"{delante} commits por delante")
+    if detras != "0":
+        trozos.append(f"{detras} por detras")
+    return " y ".join(trozos)
+
+
 def snapshot(raiz) -> Snapshot:
     """Los hechos del repo ahora mismo. Sin git, todo queda en 'sin-git'."""
     raiz = Path(raiz)
     if _git(raiz, "rev-parse", "--git-dir") is None:
         return Snapshot(hay_git=False, rama=SIN_GIT, commit=SIN_GIT)
-
     rama = (_git(raiz, "rev-parse", "--abbrev-ref", "HEAD") or "").strip() or SIN_GIT
-
-    cabeza = _git(raiz, "log", "-1", "--format=%h%x00%s%x00%cs")
-    if cabeza:
-        partes = cabeza.strip("\n").split("\0")
-        commit, asunto, fecha = (partes + ["", "", ""])[:3]
-    else:
-        # Repo recien iniciado: hay git, pero todavia no hay historia.
-        commit, asunto, fecha = "sin-commits", "", ""
-
-    # -z + separacion por NUL: los nombres con espacios, tildes o saltos de
-    # linea dejan de ser un caso especial.
-    crudo = _git(raiz, "status", "--porcelain=v1", "-z") or ""
-    sucios = []
-    for entrada in crudo.split("\0"):
-        if len(entrada) > 3:
-            nombre = entrada[3:]
-            if not _es_propio(nombre):
-                sucios.append(nombre)
-
-    adelanto = ""
-    conteo = _git(raiz, "rev-list", "--count", "--left-right", "@{upstream}...HEAD")
-    if conteo and "\t" in conteo:
-        detras, delante = conteo.strip().split("\t")[:2]
-        trozos = []
-        if delante != "0":
-            trozos.append(f"{delante} commits por delante")
-        if detras != "0":
-            trozos.append(f"{detras} por detras")
-        adelanto = " y ".join(trozos)
-
-    return Snapshot(True, rama, commit, asunto, fecha, sucios, adelanto)
+    commit, asunto, fecha = _cabeza(raiz)
+    return Snapshot(True, rama, commit, asunto, fecha, _sucios(raiz), _adelanto(raiz))
 
 
 def bloque_contexto(s: Snapshot) -> str:

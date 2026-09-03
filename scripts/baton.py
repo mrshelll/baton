@@ -42,13 +42,13 @@ def _edad_bitacora(rutas: almacen.Rutas):
     """Devuelve (ultima_marca, horas_desde_entonces) o (None, None)."""
     try:
         lineas = [l for l in rutas.bitacora.read_text(encoding="utf-8").split("\n") if l.strip()]
-        if not lineas:
-            return None, None
-        ts = json.loads(lineas[-1])["ts"]
-        cuando = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-        return ts, (datetime.now(timezone.utc) - cuando) / timedelta(hours=1)
+        ts = json.loads(lineas[-1])["ts"] if lineas else ""
     except Exception:
         return None, None
+    cuando = almacen.desde_utc(ts)
+    if cuando is None:
+        return None, None
+    return ts, (datetime.now(timezone.utc) - cuando) / timedelta(hours=1)
 
 
 def _plugin_habilitado() -> bool | None:
@@ -129,9 +129,8 @@ def _intentos(rutas: almacen.Rutas, huella: str) -> int:
         datos = json.loads(rutas.intentos.read_text(encoding="utf-8"))
         if datos.get("huella") != huella:
             return 0
-        if (datetime.now(timezone.utc)
-                - datetime.strptime(datos["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                ) > timedelta(minutes=30):
+        cuando = almacen.desde_utc(datos.get("ts"))
+        if cuando is None or datetime.now(timezone.utc) - cuando > timedelta(minutes=30):
             return 0  # una sesion vieja no arrastra intentos a la de hoy
         return int(datos.get("intentos", 0))
     except Exception:
@@ -192,14 +191,11 @@ def cmd_escribir(args) -> int:
             return PRESUPUESTO
         # Ultimo recurso: un minimo honesto y declarado, cortado por lineas
         # completas. Nunca una frase a medias fingiendo estar entera.
-        final = _escape_minimo(parte, args.modo, s, textos, cfg, _montar, intento)
+        final = _escape_minimo(parte, textos, cfg, _montar, intento)
 
     try:
         almacen.escribir_documento(rutas, final, historial_max=cfg["historial_max"])
-    except almacen.OcupadoError as exc:
-        print(f"baton: {exc}", file=sys.stderr)
-        return ENTORNO
-    except almacen.EntornoError as exc:
+    except (almacen.OcupadoError, almacen.EntornoError) as exc:
         print(f"baton: {exc}", file=sys.stderr)
         return ENTORNO
 
@@ -210,7 +206,7 @@ def cmd_escribir(args) -> int:
     return OK
 
 
-def _escape_minimo(parte, modo, s, textos, cfg, montar, intentos):
+def _escape_minimo(parte, textos, cfg, montar, intentos):
     """Compone un traspaso minimo cuando el borrador no cabe tras N intentos.
 
     Se queda con la seccion obligatoria, recortada por LINEAS COMPLETAS, y lo
@@ -230,7 +226,7 @@ def _escape_minimo(parte, modo, s, textos, cfg, montar, intentos):
 
 def cmd_ver(args) -> int:
     """Muestra el traspaso actual y lo que costaria inyectarlo."""
-    raiz, cfg, rutas, textos = _contexto_de(args)
+    raiz, cfg, rutas, _ = _contexto_de(args)
     if not rutas.documento.is_file():
         print(f"baton: este proyecto no tiene traspaso todavia ({rutas.documento}).\n"
               "Corre /baton para crearlo.")
@@ -261,7 +257,6 @@ def cmd_doctor(args) -> int:
     instalar el plugin sin reiniciar Claude Code.
     """
     raiz = almacen.raiz_proyecto(args.cwd or os.getcwd())
-    rutas = almacen.Rutas(raiz)
     lineas = [f"baton doctor -- proyecto: {raiz}", ""]
 
     hooks_json = RAIZ_PLUGIN / "hooks" / "hooks.json"
@@ -291,15 +286,17 @@ def cmd_doctor(args) -> int:
         lineas.append("  [--] plugin                 no pude leer ~/.claude/settings.json")
 
     lineas.append("")
-    rutas_cfg = almacen.Rutas(raiz, documento_rel=config.cargar(raiz)["documento"])
-    if not rutas_cfg.documento.is_file():
+    # Sirven para las dos preguntas que quedan: donde esta el documento (puede
+    # estar configurado en otro sitio) y donde la bitacora (nunca se mueve).
+    rutas = almacen.Rutas(raiz, documento_rel=config.cargar(raiz)["documento"])
+    if not rutas.documento.is_file():
         lineas.append("  Este proyecto aun no usa baton.")
         lineas.append("  Corre /baton una vez para activarlo aqui; hasta entonces los hooks callan")
         lineas.append("  a proposito, y eso NO es un fallo.")
         print("\n".join(lineas))
         return 0
 
-    lineas.append(f"  Documento: {rutas_cfg.documento}")
+    lineas.append(f"  Documento: {rutas.documento}")
     ts, horas = _edad_bitacora(rutas)
     if ts is None:
         lineas.append("")

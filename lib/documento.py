@@ -78,7 +78,7 @@ def leer_campos(texto) -> dict:
     cuerpo = _frontmatter(texto)
     if cuerpo is None:
         return {}
-    return {k: v for k, v in RE_CAMPO.findall(cuerpo)}
+    return dict(RE_CAMPO.findall(cuerpo))
 
 
 def normalizar_etiqueta(texto: str) -> str:
@@ -110,8 +110,10 @@ class Parte:
     errores: list = field(default_factory=list)
 
 
-def _quitar_frontmatter(texto: str) -> str:
+def _quitar_frontmatter(texto) -> str:
     """El modelo no escribe el frontmatter. Si lo cuela, se descarta."""
+    if not isinstance(texto, str):
+        return ""
     m = RE_FRONTMATTER.match(texto[:CABEZA])
     return texto[m.end():] if m else texto
 
@@ -137,7 +139,7 @@ def validar_borrador(texto, modo: str, textos: dict) -> Parte:
     la forma. Mezclarlas hace que el modelo pruebe la solucion equivocada.
     """
     errores = []
-    cuerpo = _quitar_frontmatter(texto if isinstance(texto, str) else "").strip()
+    cuerpo = _quitar_frontmatter(texto).strip()
     if not cuerpo:
         return Parte(False, errores=["el borrador esta vacio: escribe al menos la seccion Estado"])
 
@@ -210,7 +212,7 @@ def componer(cuerpo, modo, fecha, rama, commit, contexto, textos) -> str:
 
 def extraer_cuerpo(texto, nombre_contexto: str = "Contexto") -> str:
     """Lo que escribio el modelo: sin frontmatter y sin la seccion de git."""
-    resto = _quitar_frontmatter(texto if isinstance(texto, str) else "")
+    resto = _quitar_frontmatter(texto)
     saltar = normalizar_etiqueta(nombre_contexto)
     for m in RE_SECCION.finditer(resto):
         if normalizar_etiqueta(m.group(1)) != saltar:

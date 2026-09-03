@@ -18,6 +18,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from lib import documento
+
 #: Hasta donde subimos buscando la raiz del proyecto. Un tope evita que un cwd
 #: raro nos haga recorrer el disco entero en el arranque de cada sesion.
 MAX_NIVELES = 20
@@ -102,6 +104,40 @@ def ahora_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def desde_utc(texto):
+    """La inversa de `ahora_utc`. None si no es una marca nuestra.
+
+    Devolver None en vez de lanzar es lo que permite tratar una nota corrupta
+    como una nota ausente, que es justo lo que hay que hacer con ella.
+    """
+    try:
+        return datetime.strptime(texto or "", "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _leer_json(ruta: Path) -> dict:
+    """Lee una nota de estado (entregas, pendiente).
+
+    Todo lo que pueda salir mal -que no exista, que este corrupta, que no sea
+    un objeto- vale {}: ninguna de estas notas justifica un fallo.
+    """
+    try:
+        datos = json.loads(ruta.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return datos if isinstance(datos, dict) else {}
+
+
+def _guardar_json(ruta: Path, datos: dict) -> None:
+    """Escribe una nota de estado. Si no se puede, se pierde y ya."""
+    try:
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(json.dumps(datos), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def anotar(rutas: Rutas, evento: str, resultado: str, **extra) -> None:
     """Deja constancia de que un hook corrio.
 
@@ -147,6 +183,11 @@ class EntornoError(RuntimeError):
     """No se puede escribir: permisos, disco, ruta imposible."""
 
 
+#: Mismo texto tanto si el lock esta vivo como si perdemos la carrera por
+#: robarlo: para quien llama es la misma situacion y el mismo remedio.
+_OCUPADO = "otra sesion esta escribiendo el traspaso; vuelve a intentarlo"
+
+
 class _Lock:
     """Lock por fichero, con caducidad.
 
@@ -164,29 +205,13 @@ class _Lock:
             self.ruta.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise EntornoError(f"no puedo crear {self.ruta.parent}: {exc}") from exc
-        for intento in (1, 2):
-            try:
-                fd = os.open(self.ruta, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                os.write(fd, str(os.getpid()).encode())
-                os.close(fd)
-                self._mio = True
-                return self
-            except FileExistsError:
-                if intento == 2:
-                    raise OcupadoError(
-                        "otra sesion esta escribiendo el traspaso; vuelve a intentarlo"
-                    )
-                try:
-                    edad = time.time() - self.ruta.stat().st_mtime
-                except OSError:
-                    edad = 0
-                if edad <= LOCK_CADUCA_SEGUNDOS:
-                    raise OcupadoError(
-                        "otra sesion esta escribiendo el traspaso; vuelve a intentarlo"
-                    )
-                self.ruta.unlink(missing_ok=True)  # lock caducado: se roba
-            except OSError as exc:
-                raise EntornoError(f"no puedo bloquear {self.ruta}: {exc}") from exc
+        if self._tomar():
+            return self
+        if self._edad() <= LOCK_CADUCA_SEGUNDOS:
+            raise OcupadoError(_OCUPADO)
+        self.ruta.unlink(missing_ok=True)  # lock caducado: se roba
+        if not self._tomar():  # alguien se nos adelanto al robarlo
+            raise OcupadoError(_OCUPADO)
         return self
 
     def __exit__(self, *exc):
@@ -197,12 +222,47 @@ class _Lock:
                 pass
         return False
 
+    def _tomar(self) -> bool:
+        """Crea el lock. False si ya existia; EntornoError si no se pudo."""
+        try:
+            fd = os.open(self.ruta, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+        except FileExistsError:
+            return False
+        except OSError as exc:
+            raise EntornoError(f"no puedo bloquear {self.ruta}: {exc}") from exc
+        self._mio = True
+        return True
 
-def _nombre_historial(modo: str, cuando=None) -> str:
+    def _edad(self) -> float:
+        """Segundos desde que se creo el lock. Sin mtime vale 0, que equivale a
+        considerarlo vivo: no se roba un lock sin pruebas de que caduco."""
+        try:
+            return time.time() - self.ruta.stat().st_mtime
+        except OSError:
+            return 0
+
+
+def _marca_utc() -> str:
     """UTC a proposito: el orden alfabetico es el cronologico, sin sorpresas
     por husos horarios ni por el cambio de hora."""
-    marca = (cuando or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
-    return f"TRASPASO-{marca}-{modo}.md"
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _destino_libre(carpeta: Path, nombre: str) -> Path:
+    """`carpeta/nombre`, con -2, -3... si ya existe.
+
+    Dos escrituras dentro del mismo segundo comparten marca de tiempo, y la
+    segunda no puede pisar a la primera.
+    """
+    destino = carpeta / nombre
+    tronco, extension = destino.stem, destino.suffix
+    sufijo = 2
+    while destino.exists():
+        destino = carpeta / f"{tronco}-{sufijo}{extension}"
+        sufijo += 1
+    return destino
 
 
 def _rotar(rutas: "Rutas", historial_max: int) -> None:
@@ -214,25 +274,20 @@ def _rotar(rutas: "Rutas", historial_max: int) -> None:
     """
     if historial_max <= 0 or not rutas.documento.is_file():
         return
-    from lib import documento as _doc
     try:
-        modo = _doc.leer_modo(rutas.documento.read_text(encoding="utf-8", errors="replace"))
+        modo = documento.leer_modo(rutas.documento.read_text(encoding="utf-8", errors="replace"))
     except OSError:
-        modo = _doc.MODO_SEGURO
+        modo = documento.MODO_SEGURO
     rutas.historial.mkdir(parents=True, exist_ok=True)
-    base = _nombre_historial(modo)
-    destino = rutas.historial / base
-    sufijo = 2
-    while destino.exists():  # dos rotaciones en el mismo segundo
-        destino = rutas.historial / f"{base[:-3]}-{sufijo}.md"
-        sufijo += 1
+    destino = _destino_libre(rutas.historial, f"TRASPASO-{_marca_utc()}-{modo}.md")
     shutil.copy2(rutas.documento, destino)
     _podar(rutas, historial_max)
 
 
 def _podar(rutas: "Rutas", historial_max: int) -> None:
+    """`historial_max` siempre llega > 0: con 0 `_rotar` ni siquiera archiva."""
     mios = sorted(p for p in rutas.historial.glob("*.md") if RE_HISTORIAL.match(p.name))
-    for viejo in mios[:-historial_max] if historial_max else mios:
+    for viejo in mios[:-historial_max]:
         try:
             viejo.unlink()
         except OSError:
@@ -278,10 +333,7 @@ def registrar_entrega(rutas: "Rutas", huella: str, cuenta: bool = True):
 
     Devuelve None la primera vez, o {"veces": N, "cuando": "..."} si repite.
     """
-    try:
-        datos = json.loads(rutas.entregas.read_text(encoding="utf-8"))
-    except Exception:
-        datos = {}
+    datos = _leer_json(rutas.entregas)
     if datos.get("huella") != huella:
         datos = {"huella": huella, "veces": 0, "primera": ahora_utc(), "ultima": ""}
 
@@ -291,11 +343,7 @@ def registrar_entrega(rutas: "Rutas", huella: str, cuenta: bool = True):
     if cuenta:
         datos["veces"] = previas + 1
         datos["ultima"] = ahora_utc()
-        try:
-            rutas.asegurar_local()
-            rutas.entregas.write_text(json.dumps(datos), encoding="utf-8")
-        except OSError:
-            pass
+        _guardar_json(rutas.entregas, datos)
 
     if previas <= 0:
         return None
@@ -313,12 +361,7 @@ def guardar_resumen(rutas: "Rutas", resumen: str, trigger: str = "auto") -> None
     """Deja el `compact_summary` en disco para que se pueda usar despues."""
     try:
         rutas.auto.mkdir(parents=True, exist_ok=True)
-        marca = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        destino = rutas.auto / f"resumen-{marca}.md"
-        sufijo = 2
-        while destino.exists():
-            destino = rutas.auto / f"resumen-{marca}-{sufijo}.md"
-            sufijo += 1
+        destino = _destino_libre(rutas.auto, f"resumen-{_marca_utc()}.md")
         destino.write_text(
             f"<!-- resumen de compactacion (trigger: {trigger}), guardado por baton -->\n\n"
             + (resumen or "(la compactacion no aporto resumen)\n"),
@@ -330,14 +373,6 @@ def guardar_resumen(rutas: "Rutas", resumen: str, trigger: str = "auto") -> None
         pass
 
 
-def _leer_pendiente(rutas: "Rutas"):
-    try:
-        datos = json.loads(rutas.pendiente.read_text(encoding="utf-8"))
-        return datos if isinstance(datos, dict) else None
-    except Exception:
-        return None
-
-
 def armar_pendiente(rutas: "Rutas", session_id: str = "") -> None:
     """Marca que hay una compactacion sin traspaso.
 
@@ -345,13 +380,9 @@ def armar_pendiente(rutas: "Rutas", session_id: str = "") -> None:
     vez que se interrumpio al usuario, y si se borrara aqui, cada compactacion
     nueva lo reiniciaria y el cooldown no frenaria nada.
     """
-    datos = _leer_pendiente(rutas) or {}
+    datos = _leer_json(rutas.pendiente)
     datos.update({"armada": ahora_utc(), "session": session_id, "pedido": False})
-    try:
-        rutas.asegurar_local()
-        rutas.pendiente.write_text(json.dumps(datos), encoding="utf-8")
-    except OSError:
-        pass
+    _guardar_json(rutas.pendiente, datos)
 
 
 def hay_pendiente(rutas: "Rutas", cooldown_minutos: int = 30) -> bool:
@@ -361,27 +392,18 @@ def hay_pendiente(rutas: "Rutas", cooldown_minutos: int = 30) -> bool:
     hay que evitar es interrumpir dos veces seguidas al usuario, no perder una
     compactacion.
     """
-    datos = _leer_pendiente(rutas)
+    datos = _leer_json(rutas.pendiente)
     if not datos or datos.get("pedido"):
         return False
-    ultima = datos.get("ultima_peticion")
+    ultima = desde_utc(datos.get("ultima_peticion"))
     if ultima and cooldown_minutos:
-        try:
-            cuando = datetime.strptime(ultima, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-            if (datetime.now(timezone.utc) - cuando).total_seconds() < cooldown_minutos * 60:
-                return False
-        except ValueError:
-            pass
+        transcurrido = (datetime.now(timezone.utc) - ultima).total_seconds()
+        return transcurrido >= cooldown_minutos * 60
     return True
 
 
 def consumir_pendiente(rutas: "Rutas") -> None:
     """Marca la bandera como usada. Como mucho una peticion por compactacion."""
-    datos = _leer_pendiente(rutas) or {}
-    datos["pedido"] = True
-    datos["ultima_peticion"] = ahora_utc()
-    try:
-        rutas.asegurar_local()
-        rutas.pendiente.write_text(json.dumps(datos), encoding="utf-8")
-    except OSError:
-        pass
+    datos = _leer_json(rutas.pendiente)
+    datos.update({"pedido": True, "ultima_peticion": ahora_utc()})
+    _guardar_json(rutas.pendiente, datos)

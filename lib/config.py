@@ -84,7 +84,7 @@ def _fusionar(base: dict, encima: dict, ruta: Path, avisos: list) -> dict:
             for nombre, numero in valor.items():
                 if nombre not in POR_DEFECTO["topes"]:
                     avisos.append(f"{ruta.name}: tope desconocido 'topes.{nombre}'; lo ignoro")
-                elif isinstance(numero, bool) or not isinstance(numero, int) or numero <= 0:
+                elif not _entero_valido(numero, 1):
                     avisos.append(f"{ruta.name}: 'topes.{nombre}' debe ser un entero positivo; uso {POR_DEFECTO['topes'][nombre]}")
                 else:
                     salida["topes"][nombre] = numero
@@ -94,13 +94,19 @@ def _fusionar(base: dict, encima: dict, ruta: Path, avisos: list) -> dict:
             else:
                 salida["documento"] = valor
         elif clave == "historial_max":
-            if isinstance(valor, int) and not isinstance(valor, bool) and valor >= 0:
+            if _entero_valido(valor, 0):
                 salida["historial_max"] = valor
             else:
                 avisos.append(f"{ruta.name}: 'historial_max' debe ser un entero >= 0; uso {POR_DEFECTO['historial_max']}")
         else:
             salida[clave] = valor
     return salida
+
+
+def _entero_valido(valor, minimo: int) -> bool:
+    """bool es subclase de int en Python: sin descartarlo, un `true` en el JSON
+    colaria como el numero 1."""
+    return isinstance(valor, int) and not isinstance(valor, bool) and valor >= minimo
 
 
 def _ruta_segura(valor) -> bool:

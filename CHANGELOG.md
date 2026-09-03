@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1 — 2026-09-03
+
+### Corregido
+- Un fichero de estado con JSON válido pero que no fuera un objeto (una lista,
+  por ejemplo) propagaba `AttributeError` hacia el hook.
+- Un `ultima_peticion` no textual en la bandera lanzaba `TypeError`, que no
+  estaba capturado.
+
+Los dos rompían la garantía central —el hook siempre sale con 0— y ahora tienen
+tests de regresión que fallan contra el código anterior.
+
+### Cambiado
+- Pasada de simplificación: se unifican la lectura y escritura de los ficheros
+  de estado, el nombrado de ficheros sin colisión y el formato de fecha UTC, que
+  estaban repetidos. `snapshot()` se parte en tres. Se elimina código inalcanzable
+  y parámetros que nadie usaba. Sin cambios de comportamiento visibles.
+
 ## 0.2.0 — 2026-09-03
 
 Primera versión con el ciclo completo funcionando de punta a punta.

@@ -63,19 +63,12 @@ def _raiz(entrada: dict) -> Path:
 
 
 # --- manejadores ---------------------------------------------------------
-# Cada uno devuelve (carga_de_salida, resultado_para_la_bitacora).
+# Todos reciben (entrada, rutas, cfg) y devuelven
+# (carga_de_salida, resultado_para_la_bitacora). `main` solo los llama con el
+# proyecto ya activado, asi que ninguno tiene que comprobarlo.
 
-def _session_start(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:
-    """Inyecta el traspaso al arrancar la sesion.
-
-    Si no hay documento, silencio absoluto: es el caso mayoritario del mundo
-    -todo proyecto donde nunca se uso /baton- y no puede ser ruido.
-    """
-    cfg = config.cargar(rutas.raiz)
-    rutas = almacen.Rutas(rutas.raiz, documento_rel=cfg["documento"])
-    if not rutas.documento.is_file():
-        return {}, "silencio: proyecto sin activar"
-
+def _session_start(entrada: dict, rutas: almacen.Rutas, cfg: dict) -> tuple[dict, str]:
+    """Inyecta el traspaso al arrancar la sesion."""
     origen = entrada.get("source") or "startup"
     if origen not in cfg["inyectar_en"]:
         return {}, f"silencio: '{origen}' no esta en inyectar_en"
@@ -115,7 +108,7 @@ def _session_start(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:
     return carga, f"inyectado modo {modo}"
 
 
-def _post_compact(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:
+def _post_compact(entrada: dict, rutas: almacen.Rutas, cfg: dict) -> tuple[dict, str]:
     """Guarda el resumen de la compactacion y arma la bandera. Nada mas.
 
     Aqui no se puede redactar: en la compactacion no hay turno de modelo, y el
@@ -127,18 +120,13 @@ def _post_compact(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:
     Y no toca el traspaso. Jamas: un resumen que nadie redacto no puede pisar
     uno escrito con criterio.
     """
-    cfg = config.cargar(rutas.raiz)
-    rutas = almacen.Rutas(rutas.raiz, documento_rel=cfg["documento"])
-    if not rutas.documento.is_file():
-        return {}, "silencio: proyecto sin activar"
-
     resumen = entrada.get("compact_summary") or ""
     almacen.guardar_resumen(rutas, resumen, trigger=entrada.get("trigger") or "auto")
     almacen.armar_pendiente(rutas, entrada.get("session_id") or "")
-    return ({}, "resumen guardado y traspaso pendiente")
+    return {}, "resumen guardado y traspaso pendiente"
 
 
-def _stop(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:
+def _stop(entrada: dict, rutas: almacen.Rutas, cfg: dict) -> tuple[dict, str]:
     """Pide el traspaso, pero solo en el momento correcto.
 
     Ese momento es justo despues de una compactacion: el contexto se acaba de
@@ -146,14 +134,10 @@ def _stop(entrada: dict, rutas: almacen.Rutas) -> tuple[dict, str]:
     al 70-80 % de la ventana, saldria caro y ademas la propia redaccion podria
     disparar la compactacion que se intentaba anticipar.
 
-    Cuatro puertas antes de interrumpir a nadie: proyecto activado, bandera
-    armada, `stop_hook_active` falso (anti-bucle del harness) y cooldown.
+    Cuatro puertas antes de interrumpir a nadie: proyecto activado (esa la
+    mira `main`), `stop_hook_active` falso (anti-bucle del harness), bandera
+    armada y cooldown.
     """
-    cfg = config.cargar(rutas.raiz)
-    rutas = almacen.Rutas(rutas.raiz, documento_rel=cfg["documento"])
-    if not rutas.documento.is_file():
-        return {}, "silencio: proyecto sin activar"
-
     if entrada.get("stop_hook_active"):
         return {}, "silencio: ya estamos dentro de un Stop bloqueado"
 
@@ -197,8 +181,19 @@ def main() -> int:
         if manejador is None:
             # Un evento que no conocemos no es un error nuestro: callamos.
             return 0
+        # Las rutas se calculan antes de la config para que la bitacora sea
+        # localizable pase lo que pase; luego se rehacen porque el documento
+        # puede estar configurado en otro sitio (la bitacora no se mueve).
         rutas = almacen.Rutas(_raiz(entrada))
-        carga, resultado = manejador(entrada, rutas)
+        cfg = config.cargar(rutas.raiz)
+        rutas = almacen.Rutas(rutas.raiz, documento_rel=cfg["documento"])
+        if rutas.documento.is_file():
+            carga, resultado = manejador(entrada, rutas, cfg)
+        else:
+            # Sin documento los tres eventos callan igual: es el caso
+            # mayoritario del mundo -todo proyecto donde nunca se uso /baton- y
+            # no puede ser ruido.
+            carga, resultado = {}, "silencio: proyecto sin activar"
         _emitir(carga)
         almacen.anotar(rutas, evento=evento, resultado=resultado,
                        source=entrada.get("source") or entrada.get("trigger") or "")

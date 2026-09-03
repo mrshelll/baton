@@ -31,6 +31,10 @@ _INVISIBLES = {
     "⁦", "⁧", "⁨", "⁩",
 }
 
+#: Controles (Cc), formato (Cf), uso privado (Co) y mitades sueltas de un par
+#: subrogado (Cs). Nada de esto dibuja un caracter en pantalla.
+_CATEGORIAS_FUERA = ("Cc", "Cf", "Co", "Cs")
+
 
 def cargar_textos(idioma: str = "es") -> dict:
     """Los textos que ve el modelo viven en templates/, no en el codigo."""
@@ -48,11 +52,7 @@ def sanear(texto) -> str:
     for c in texto:
         if c in _PERMITIDOS:
             limpio.append(c)
-        elif c in _INVISIBLES:
-            continue
-        elif unicodedata.category(c) in ("Cc", "Cf", "Co", "Cs"):
-            continue
-        else:
+        elif c not in _INVISIBLES and unicodedata.category(c) not in _CATEGORIAS_FUERA:
             limpio.append(c)
     return "".join(limpio)
 
@@ -68,7 +68,7 @@ def _desactivar_cierre(texto: str, etiqueta: str) -> str:
 
 
 def envolver(documento, modo, escrito, origen, aviso_frescura="", repetido=None,
-             textos=None, techo_caracteres=None, techo_lineas=None) -> str:
+             textos=None) -> str:
     """Arma el texto exacto que se inyecta como `additionalContext`.
 
     Orden deliberado: primero la instruccion de modo (es lo unico que no puede
@@ -77,8 +77,6 @@ def envolver(documento, modo, escrito, origen, aviso_frescura="", repetido=None,
     """
     t = textos or cargar_textos()
     etiqueta = t["etiqueta"]
-    techo_c = techo_caracteres or presupuesto.TECHO_CARACTERES
-    techo_l = techo_lineas or presupuesto.TECHO_LINEAS
 
     cabeza = [
         f'<{etiqueta} modo="{modo}" escrito="{escrito}" origen="{origen}">',
@@ -101,8 +99,8 @@ def envolver(documento, modo, escrito, origen, aviso_frescura="", repetido=None,
     # asi un aviso de frescura largo no puede empujar el total por encima.
     fijo = "\n".join(cabeza + [t["abre_documento"]] + cola) + "\n"
     aviso_recorte = t["recortado_al_inyectar"]
-    margen_c = techo_c - len(fijo) - len(aviso_recorte) - 2
-    margen_l = techo_l - len(fijo.split("\n")) - 2
+    margen_c = presupuesto.TECHO_CARACTERES - len(fijo) - len(aviso_recorte) - 2
+    margen_l = presupuesto.TECHO_LINEAS - len(fijo.split("\n")) - 2
 
     cuerpo, recortado = presupuesto.recortar_por_lineas(cuerpo_limpio, margen_c, margen_l)
 
