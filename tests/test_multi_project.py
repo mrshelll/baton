@@ -281,6 +281,30 @@ class TestWriteTarget(Base):
         self.assertIn(str(radar), p.stdout)
 
 
+class TestDoctor(Base):
+    def test_it_lists_the_projects_and_the_active_one(self):
+        self.sub("proyectos/radar")
+        self.sub("proyectos/instrumentos")
+        self.cli("load", "radar")
+        p = self.cli("doctor")
+        self.assertIn("proyectos/radar", p.stdout)
+        self.assertIn("proyectos/instrumentos", p.stdout)
+        self.assertIn("active", p.stdout.lower())
+
+    def test_it_says_how_deep_it_looked(self):
+        p = self.cli("doctor")
+        self.assertIn("depth 2", p.stdout)
+
+    def test_it_warns_when_the_scan_hit_its_cap(self):
+        (self.project / ".claude").mkdir(exist_ok=True)
+        (self.project / ".claude" / "baton.json").write_text(
+            '{"discovery": {"max_dirs": 50}}', encoding="utf-8")
+        for i in range(60):
+            (self.project / f"vacia{i}").mkdir()
+        p = self.cli("doctor")
+        self.assertIn("limit", p.stdout.lower())
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()

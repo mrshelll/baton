@@ -380,6 +380,19 @@ def cmd_doctor(args) -> int:
 
     out.append(f"  [ok] language               {cfg['language']} "
                f"(available: {', '.join(output.available_languages())})")
+
+    # "my project does not show up" must never be a mystery: how deep it looked,
+    # what it found and whether it gave up are all one command away.
+    out.append(f"  [ok] discovery              depth {ctx.cfg['discovery']['depth']}, "
+               f"{len(ctx.found.projects)} project(s) found")
+    for project in ctx.found.projects:
+        card = projects.describe(project, ctx.cfg["document"])
+        out.append(f"         - {project.rel}  ({card.mode}, {card.date or 'no date'})")
+    if ctx.found.truncated:
+        out.append("  [!!] the scan hit its limit; raise discovery.max_dirs to see the rest")
+    active = projects.read_active(ctx.root, ctx.found)
+    out.append(f"  [ok] active project         {active.rel}" if active
+               else "  [--] active project         none loaded in this session")
     out.append("")
 
     if not paths.document.is_file():
