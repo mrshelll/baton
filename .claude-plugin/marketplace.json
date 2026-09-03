@@ -9,7 +9,7 @@
     {
       "name": "baton",
       "description": "A handoff that does not grow: whole rewrite, hard budget enforced by code, continue/memory modes and a freshness notice against git. English and Spanish.",
-      "version": "0.3.2",
+      "version": "0.4.0",
       "source": "./",
       "author": {
         "name": "Miguelacho"
