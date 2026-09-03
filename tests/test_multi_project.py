@@ -105,6 +105,51 @@ class TestSessionStart(Base):
         self.assertIsNone(projects.read_active(self.project, found))
 
 
+class TestAutomaticCycle(Base):
+    def compact(self, **extra):
+        return self.run_hook("post-compact", self.payload(
+            "PostCompact", compact_summary="a summary", trigger="auto", **extra))
+
+    def stop(self, **extra):
+        return self.run_hook("stop", self.payload("Stop", stop_hook_active=False, **extra))
+
+    def activate(self, rel):
+        found = projects.discover(self.project)
+        target = [p for p in found.projects if p.rel == rel][0]
+        projects.set_active(self.project, target, session="test-session")
+        return self.project / rel
+
+    def test_the_summary_lands_in_the_active_project(self):
+        self.sub("proyectos/radar")
+        self.sub("proyectos/instrumentos")
+        radar = self.activate("proyectos/radar")
+        self.compact()
+        self.assertTrue(any((radar / ".baton" / "local" / "auto").glob("summary-*.md")))
+        self.assertFalse((self.project / ".baton" / "local" / "auto").exists())
+
+    def test_stop_asks_and_names_the_active_project(self):
+        self.sub("proyectos/radar")
+        self.activate("proyectos/radar")
+        self.compact()
+        _, out, _ = self.stop()
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("radar", out["reason"])
+
+    def test_with_no_active_project_and_no_root_document_it_stays_quiet(self):
+        # Interrupting with a question the hook cannot answer on its own is
+        # worse than saying nothing.
+        self.sub("proyectos/radar")
+        self.compact()
+        _, out, _ = self.stop()
+        self.assertIsNone(out)
+
+    def test_a_single_project_root_still_gets_asked(self):
+        self.handoff(self.project)
+        self.compact()
+        _, out, _ = self.stop()
+        self.assertEqual(out["decision"], "block")
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()

@@ -107,6 +107,21 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
     return payload, f"injected {mode} mode"
 
 
+def _hook_target(root, paths: storage.Paths, cfg, found):
+    """Where an unattended hook writes: the active project, else the root.
+
+    Returns `(paths, label)` with paths None when neither exists. Both hooks have
+    to agree on this, because `post-compact` arms the flag that `stop` reads back:
+    pointing them at different directories would arm a flag nobody reads.
+    """
+    active = projects.read_active(root, found)
+    if active is not None:
+        return storage.Paths(active.path, document_rel=cfg["document"]), active.name
+    if paths.document.is_file():
+        return paths, ""
+    return None, ""
+
+
 def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, str]:
     """Save the compaction summary and arm the flag. Nothing else.
 
@@ -119,9 +134,12 @@ def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[
     And it does not touch the handoff. Ever: a summary nobody wrote must not
     overwrite one written with judgement.
     """
-    storage.save_summary(paths, entry.get("compact_summary") or "",
+    target, _ = _hook_target(root, paths, cfg, found)
+    if target is None:
+        return {}, "silent: no target for the summary"
+    storage.save_summary(target, entry.get("compact_summary") or "",
                          trigger=entry.get("trigger") or "auto")
-    storage.arm_pending(paths, entry.get("session_id") or "")
+    storage.arm_pending(target, entry.get("session_id") or "")
     return {}, "summary saved, handoff pending"
 
 
@@ -138,13 +156,21 @@ def _stop(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, st
     """
     if entry.get("stop_hook_active"):
         return {}, "silent: already inside a blocked Stop"
-    if not storage.has_pending(paths, cfg["cooldown_minutes"]):
+
+    # A hook cannot ask which project this was about, so with no resolvable
+    # target it says nothing. Interrupting with a question it cannot answer on
+    # its own is worse than silence.
+    target, label = _hook_target(root, paths, cfg, found)
+    if target is None:
+        return {}, "silent: no resolvable target"
+
+    if not storage.has_pending(target, cfg["cooldown_minutes"]):
         return {}, "silent: nothing pending"
 
     # Consumed BEFORE asking: if something fails afterwards, at worst one
     # request is lost. The other way round it would ask in a loop, which is far
     # worse.
-    storage.consume_pending(paths)
+    storage.consume_pending(target)
 
     return ({
         "decision": "block",
@@ -152,14 +178,16 @@ def _stop(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, st
             "baton: this session has just been compacted, so the compaction summary is "
             "still fresh in your context and this is the best moment to bring the "
             "handoff up to date.\n\n"
-            "Write the handoff now following the `baton` skill: ask for the context with "
+            + (f"This session's active project is `{label}`; the handoff goes there, and "
+               "the commands below already target it.\n\n" if label else "")
+            + "Write the handoff now following the `baton` skill: ask for the context with "
             "`baton.py context`, draft ONLY the body into the draft file, and write it "
             "with `baton.py write --mode <memory|continue>`. Distil the summary, do not "
             "copy it: there is a budget and it is enforced.\n\n"
             "When you are done, resume what you were doing or keep waiting for the user, "
             "whichever applies. baton will not ask again for this compaction."
         ),
-    }, "handoff requested after compaction")
+    }, f"handoff requested after compaction{f' for {label}' if label else ''}")
 
 
 HANDLERS = {
