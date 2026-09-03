@@ -91,7 +91,7 @@
     "no_draft": "baton: no encuentro el borrador en {path}.\nEscribe ahí SOLO el cuerpo del traspaso (con Write) y repite el comando.",
     "invalid_mode": "baton: modo inválido '{mode}'. Usa: {valid}",
     "invalid_draft": "baton: el borrador no cumple el contrato. No se ha escrito nada.",
-    "which_project": "baton: esta raíz tiene varios proyectos y ninguno está activo en esta sesión, así que el destino no se puede deducir de nada que haya en disco. Pregúntale al USUARIO en UNA línea a cuál de estos pertenece el traspaso, y repite este comando con --project <nombre>. Nunca le pidas que escriba él la bandera; se la pasas tú.",
+    "which_project": "baton: esta raíz tiene proyectos propios y ninguno está activo en esta sesión, así que nada en disco dice de quién es este traspaso. Pregúntale al USUARIO en UNA línea: uno de los proyectos de abajo, la raíz misma (`.`), o una carpeta que todavía no tenga traspaso (basta su nombre). Y repite este comando con --project. Nunca le pidas que escriba él la bandera; se la pasas tú.",
     "which_target": "baton: la sesión está en `{here}`, bajo la raíz `{root}`, y ninguno tiene traspaso todavía. Es una decisión de una sola vez sobre dónde vivirá el traspaso de este proyecto. Pregúntale al USUARIO en UNA línea -- esta carpeta o la raíz -- y repite este comando con --project, pasando `{here}` o `.`. Nunca le pidas que escriba él la bandera; se la pasas tú.",
     "unknown_project": "baton: ningún proyecto coincide con '{name}'. Pásale a --project uno de estos (basta el nombre de la carpeta):",
     "loaded": "baton: `{name}` es ahora el proyecto activo de esta sesión.",

@@ -158,6 +158,24 @@ class Target:
         return ROOT_NAME if self.project is None else self.project.name
 
 
+def _names_root(root: Path, key: str) -> bool:
+    """The key names the root ITSELF: its folder name, or any trailing slice of
+    its path.
+
+    Not a nicety. Writing the draft creates `.baton/`, which is a root marker, so
+    between the `context` call and the `write` call the root moves down onto the
+    very folder that was just named -- and `proyectos/radar`, valid in the first
+    command, would name nothing in the second. The same string has to keep
+    meaning the same folder across the one sequence that needs it, or the cold
+    start cannot be completed at all.
+    """
+    parts = [p for p in str(key).replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts or len(parts) > len(root.parts):
+        return False
+    tail = root.parts[-len(parts):]
+    return all(a.casefold() == b.casefold() for a, b in zip(tail, parts))
+
+
 def _inside(root: Path, candidate: Path) -> bool:
     """`candidate` really is under `root`, with symlinks and `..` resolved."""
     try:
@@ -198,12 +216,7 @@ def resolve(root, discovery: Discovery, name, allow_new: bool = False):
         if len(matches) > 1:
             return None, matches
 
-    # The root, named by its own folder name. This is not a nicety: writing the
-    # draft creates `.baton/`, which is a root marker, so between the `context`
-    # call and the `write` call the root can move down to the very folder that
-    # was named. Without this the flag stops resolving halfway through the one
-    # sequence that needs it, and the cold start cannot be completed at all.
-    if key.casefold() == root.name.casefold():
+    if _names_root(root, key):
         return Target(root), []
 
     if allow_new:

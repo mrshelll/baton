@@ -244,16 +244,18 @@ class TestWriteTarget(Base):
         self.assertIn("where we are, concretely",
                       (radar / ".baton" / "HANDOFF.md").read_text(encoding="utf-8"))
 
-    def test_a_single_project_needs_no_question(self):
-        # Nothing to choose between: asking would be ceremony. Choosing among
-        # several is the only case where being wrong costs a handoff.
+    def test_even_a_single_project_is_asked_about(self):
+        # Being the only project on disk is not evidence that THIS handoff is
+        # that project's. At the root, working on a folder that has no handoff
+        # yet, the count would send its content over the one project that does.
         radar = self.sub("proyectos/radar")
-        self.draft(radar)
+        before = (radar / ".baton" / "HANDOFF.md").read_text(encoding="utf-8")
+        self.draft(self.project)
         p = self.cli("write", "--mode", "memory")
-        self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertIn(str(radar), p.stdout)
+        self.assertEqual(p.returncode, 3)
+        self.assertEqual((radar / ".baton" / "HANDOFF.md").read_text(encoding="utf-8"), before)
 
-    def test_but_a_root_with_its_own_handoff_makes_even_one_ambiguous(self):
+    def test_a_root_with_its_own_handoff_is_ambiguous_too(self):
         self.handoff(self.project)
         self.sub("proyectos/radar")
         self.draft(self.project)
@@ -342,6 +344,20 @@ class TestColdStart(Base):
         p = self.deep_cli(self.radar, "context", "--project", "radar-licitaciones-secop")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn(str(self.radar / ".baton" / "local" / "draft.md"), p.stdout)
+
+    def test_a_relative_path_survives_the_draft_moving_the_root(self):
+        # Found on the first real run: `context` took
+        # `proyectos/radar-licitaciones-secop` and `write` refused the very same
+        # string, because by then the root had moved down onto that folder. Both
+        # commands have to resolve one string to one folder.
+        ctx = self.deep_cli(self.radar, "context",
+                            "--project", "proyectos/radar-licitaciones-secop")
+        self.assertEqual(ctx.returncode, 0, ctx.stderr)
+        self.draft(self.radar)          # this is what moves the root
+        p = self.deep_cli(self.radar, "write", "--mode", "memory",
+                          "--project", "proyectos/radar-licitaciones-secop")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue((self.radar / ".baton" / "HANDOFF.md").is_file())
 
     def test_the_flag_survives_the_draft_moving_the_root(self):
         # The real cold-start sequence: context --project, write the draft, then

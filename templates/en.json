@@ -90,7 +90,7 @@
     "no_draft": "baton: no draft found at {path}.\nWrite ONLY the handoff body there (with Write) and repeat the command.",
     "invalid_mode": "baton: invalid mode '{mode}'. Use: {valid}",
     "invalid_draft": "baton: the draft does not meet the contract. Nothing has been written.",
-    "which_project": "baton: this root holds several projects and none is active in this session, so the target cannot be worked out from anything on disk. Ask the USER in ONE line which of these the handoff belongs to, then repeat this command with --project <name>. Never ask them to type the flag themselves; you pass it.",
+    "which_project": "baton: this root holds projects of its own and none is active in this session, so nothing on disk says whose handoff this is. Ask the USER in ONE line: one of the projects below, the root itself (`.`), or a folder that has no handoff yet (its name is enough). Then repeat this command with --project. Never ask them to type the flag themselves; you pass it.",
     "which_target": "baton: the session is standing in `{here}`, under the root `{root}`, and neither has a handoff yet. This is a one-time decision about where this project's handoff will live. Ask the USER in ONE line -- this folder, or the root -- and then repeat this command with --project, passing `{here}` or `.`. Never ask them to type the flag themselves; you pass it.",
     "unknown_project": "baton: no project matches '{name}'. Pass one of these to --project (a folder name is enough):",
     "loaded": "baton: `{name}` is now this session's active project.",

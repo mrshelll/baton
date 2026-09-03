@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.2 — 2026-09-03
+
+Both of these came out of the second real run, minutes after 0.4.1 shipped.
+
+### Fixed
+- **`context` took `proyectos/radar` and `write` refused the very same string.**
+  Writing the draft in between creates `.baton/`, a root marker, so the root had
+  moved down onto that folder and the relative path named nothing any more. 0.4.1
+  had covered the bare-name form of this and missed the path form. A key naming
+  the root itself — its folder name, or any trailing slice of its path — now
+  resolves, so one string means one folder across the whole sequence.
+
+### Changed
+- **A root with exactly one project no longer decides on its own.** 0.4.1 skipped
+  the question there, reasoning there was nothing to choose between. There is:
+  being the only project on disk is not evidence that THIS handoff is that
+  project's. A session at the root, working on a folder that has no handoff yet,
+  would have had its content written over the one project that does — the exact
+  failure the design forbids, reintroduced by a convenience. The count never
+  changes what is being decided, which is whose handoff gets replaced.
+- The question now offers all three real answers — one of the listed projects,
+  the root itself, or a folder with no handoff yet — instead of only the first.
+
 ## 0.4.1 — 2026-09-03
 
 The first real run of 0.4.0, in a folder with two factory projects, failed four

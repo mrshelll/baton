@@ -94,12 +94,12 @@ def _resolve(args, allow_new: bool = False):
             target, ask_where = None, True
         elif not found.projects:
             target = projects.Target(root)   # the ordinary single-project case
-        elif len(found.projects) == 1 and not root_enabled:
-            # One project and a root that is not one itself: nothing to choose
-            # between, so asking would be ceremony. Choosing among several is the
-            # only case where being wrong costs a handoff.
-            target = projects.Target(root, found.projects[0])
         else:
+            # Not even when there is exactly one. Being the only project on disk
+            # is not evidence that THIS handoff is that project's: a session at
+            # the root working on a folder that has no handoff yet would have its
+            # content written over the one project that does. The count does not
+            # change what is being decided, which is whose handoff gets replaced.
             target = None
         candidates = list(found.projects)
     else:

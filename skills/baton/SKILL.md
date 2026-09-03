@@ -20,12 +20,18 @@ The exception is a root that holds several projects. Then the commands resolve
 the target in this order, without you doing anything:
 
 1. the project you loaded with `baton.py load <name>` this session,
-2. the project the session is standing in,
-3. the only project there is, when the root is not one itself.
+2. the project the session is standing in.
 
-If none of those settle it, the command **stops and tells you so**. Only then:
-ask the user in ONE short line which project this handoff belongs to, and repeat
-the command with `--project <name>` yourself. A folder name is enough.
+If neither settles it, the command **stops and tells you so**. Only then: ask the
+user in ONE short line which project this handoff belongs to, and repeat the
+command with `--project <name>` yourself. A folder name is enough, `.` means the
+root, and a folder with no handoff yet is accepted — that is how a project gets
+its first one.
+
+Pass the same `--project` value to `context` and to `write`. Writing the draft
+creates `.baton/`, which is a root marker, so the root may move between the two
+commands; the value keeps meaning the same folder, but only if you do not change
+it halfway.
 
 Two rules about that question. Never work the answer out from which files the
 session touched — in a session that touched two projects, guessing wrong

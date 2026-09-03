@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-299-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-300-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -303,11 +303,12 @@ disco, en este orden:
 
 1. el proyecto cargado con `load` en esta sesión,
 2. el proyecto en el que está parada la sesión — una carpeta de proyecto tiene su
-   propio `.baton/`, así que baton se detiene ahí en vez de subir a la raíz,
-3. el único proyecto que hay, cuando la raíz no es uno.
+   propio `.baton/`, así que baton se detiene ahí en vez de subir a la raíz.
 
 Solo quedan dos situaciones, y en las dos baton se detiene y lo dice en vez de
-adivinar — porque lo que estaría adivinando es qué traspaso se sobrescribe:
+adivinar — porque lo que estaría adivinando es qué traspaso se sobrescribe. Ni
+siquiera una raíz con un único proyecto decide sola: ser el único proyecto en
+disco no es prueba de que este traspaso sea suyo.
 
 - **El primer traspaso de un proyecto**, cuando nadie ha decidido todavía si
   pertenece a la carpeta donde estás o a la raíz. Es una decisión de una sola
@@ -454,7 +455,7 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 ./tests/run.sh
 ```
 
-299 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+300 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.
