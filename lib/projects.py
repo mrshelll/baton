@@ -104,3 +104,76 @@ def discover(root, depth: int = DEFAULT_DEPTH, max_dirs: int = DEFAULT_MAX_DIRS,
         level = following
 
     return Discovery(tuple(sorted(found, key=lambda p: p.rel)), truncated)
+
+
+@dataclass(frozen=True)
+class Target:
+    """A resolved destination: the root itself, or one subproject."""
+    root: Path
+    project: SubProject | None = None
+
+    @property
+    def is_root(self) -> bool:
+        return self.project is None
+
+    @property
+    def path(self) -> Path:
+        return self.root if self.project is None else self.project.path
+
+    @property
+    def rel(self) -> str:
+        return ROOT_NAME if self.project is None else self.project.rel
+
+    @property
+    def label(self) -> str:
+        return ROOT_NAME if self.project is None else self.project.name
+
+
+def _inside(root: Path, candidate: Path) -> bool:
+    """`candidate` really is under `root`, with symlinks and `..` resolved."""
+    try:
+        return candidate.resolve(strict=False).is_relative_to(root.resolve(strict=False))
+    except (OSError, ValueError):
+        return False
+
+
+def resolve(root, discovery: Discovery, name, allow_new: bool = False):
+    """Turn a name typed by a human into a Target.
+
+    Returns `(target, candidates)`. A None target means the caller must not pick:
+    the candidates are printed and the command stops. Ambiguity is never resolved
+    by choosing, because the thing being chosen is which handoff gets
+    overwritten.
+
+    `allow_new` is the cold start: `write --project` may name a directory that
+    does not have a handoff YET. It must already exist -- baton creates `.baton/`
+    inside a folder, never the project folder itself, so a typo cannot found a
+    project in a directory nobody made.
+    """
+    root = Path(root)
+    everything = list(discovery.projects)
+    if name is None:
+        return None, everything
+
+    key = str(name).strip()
+    if key in (ROOT_NAME, ""):
+        return Target(root), []
+
+    for matches in (
+        [p for p in everything if p.rel == key],
+        [p for p in everything if p.name.casefold() == key.casefold()],
+        [p for p in everything if key.casefold() in p.name.casefold()],
+    ):
+        if len(matches) == 1:
+            return Target(root, matches[0]), []
+        if len(matches) > 1:
+            return None, matches
+
+    if allow_new:
+        candidate = root / key
+        if candidate.is_dir() and _inside(root, candidate):
+            return Target(root, SubProject(
+                rel=candidate.relative_to(root).as_posix(),
+                name=candidate.name, path=candidate)), []
+
+    return None, everything

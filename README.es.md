@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-227-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-237-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -363,7 +363,7 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 ./tests/run.sh
 ```
 
-227 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+237 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.

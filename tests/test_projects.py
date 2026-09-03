@@ -89,3 +89,67 @@ class TestDiscovery(Base):
     def test_an_unreadable_root_returns_empty_instead_of_raising(self):
         found = projects.discover(self.project / "no-existe")
         self.assertEqual(found.projects, ())
+
+
+class TestResolve(Base):
+    def setUp(self):
+        super().setUp()
+        self.make_project("proyectos/radar-licitaciones")
+        self.make_project("proyectos/instrumentos")
+        self.found = projects.discover(self.project)
+
+    def resolve(self, name, **kw):
+        return projects.resolve(self.project, self.found, name, **kw)
+
+    def test_dot_means_the_root(self):
+        target, candidates = self.resolve(".")
+        self.assertTrue(target.is_root)
+        self.assertEqual(target.path, self.project)
+        self.assertEqual(candidates, [])
+
+    def test_exact_relative_path(self):
+        target, _ = self.resolve("proyectos/radar-licitaciones")
+        self.assertEqual(target.rel, "proyectos/radar-licitaciones")
+
+    def test_exact_name_ignoring_case(self):
+        target, _ = self.resolve("RADAR-licitaciones")
+        self.assertEqual(target.rel, "proyectos/radar-licitaciones")
+
+    def test_unique_substring(self):
+        target, _ = self.resolve("radar")
+        self.assertEqual(target.rel, "proyectos/radar-licitaciones")
+
+    def test_an_ambiguous_substring_resolves_to_nothing(self):
+        self.make_project("proyectos/radar-otro")
+        self.found = projects.discover(self.project)
+        target, candidates = self.resolve("radar")
+        self.assertIsNone(target)
+        self.assertEqual(len(candidates), 2)
+
+    def test_an_unknown_name_lists_every_project(self):
+        target, candidates = self.resolve("nada-que-ver")
+        self.assertIsNone(target)
+        self.assertEqual(len(candidates), 2)
+
+    def test_no_name_resolves_to_nothing(self):
+        target, candidates = self.resolve(None)
+        self.assertIsNone(target)
+        self.assertEqual(len(candidates), 2)
+
+    def test_allow_new_accepts_an_existing_folder_without_handoff(self):
+        (self.project / "proyectos" / "nuevo").mkdir()
+        target, _ = self.resolve("proyectos/nuevo", allow_new=True)
+        self.assertEqual(target.rel, "proyectos/nuevo")
+
+    def test_allow_new_rejects_a_folder_that_does_not_exist(self):
+        target, candidates = self.resolve("proyectos/typo", allow_new=True)
+        self.assertIsNone(target)
+        self.assertEqual(len(candidates), 2)
+
+    def test_allow_new_cannot_escape_the_root(self):
+        # Absolute paths and .. are how a typo turns into writing outside the
+        # project. The same rule config.py applies to `document`.
+        for escape in ("../fuera", "/tmp", "proyectos/../../fuera"):
+            with self.subTest(escape=escape):
+                target, _ = self.resolve(escape, allow_new=True)
+                self.assertIsNone(target)
