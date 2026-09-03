@@ -98,5 +98,50 @@ class TestLoad(BaseCase):
         self.assertTrue(any("available" in w for w in c.warnings), c.warnings)
 
 
+class TestDiscoveryKey(BaseCase):
+    def write_cfg(self, where, data):
+        (where / ".claude").mkdir(parents=True, exist_ok=True)
+        (where / ".claude" / "baton.json").write_text(json.dumps(data), encoding="utf-8")
+
+    def load(self, where=None, parent=None):
+        return config.load(where or self.project, global_path=self.project / "nope.json",
+                           parent=parent)
+
+    def test_the_default_is_depth_two(self):
+        cfg = self.load()
+        self.assertEqual(cfg["discovery"]["depth"], 2)
+        self.assertEqual(cfg["discovery"]["max_dirs"], 400)
+
+    def test_the_root_can_deepen_it(self):
+        self.write_cfg(self.project, {"discovery": {"depth": 3}})
+        cfg = self.load()
+        self.assertEqual(cfg["discovery"]["depth"], 3)
+        self.assertEqual(cfg["discovery"]["max_dirs"], 400)
+
+    def test_an_absurd_depth_warns_and_falls_back(self):
+        self.write_cfg(self.project, {"discovery": {"depth": 99}})
+        cfg = self.load()
+        self.assertEqual(cfg["discovery"]["depth"], 2)
+        self.assertTrue(any("depth" in w for w in cfg.warnings))
+
+    def test_a_subproject_inherits_the_root_and_overrides_what_is_its_own(self):
+        sub = self.project / "proyectos" / "radar"
+        sub.mkdir(parents=True)
+        self.write_cfg(self.project, {"language": "es", "history_max": 3})
+        self.write_cfg(sub, {"history_max": 5})
+        cfg = self.load(sub, parent=self.project)
+        self.assertEqual(cfg["language"], "es")
+        self.assertEqual(cfg["history_max"], 5)
+
+    def test_discovery_in_a_subproject_is_ignored_with_a_warning(self):
+        sub = self.project / "proyectos" / "radar"
+        sub.mkdir(parents=True)
+        self.write_cfg(self.project, {"discovery": {"depth": 3}})
+        self.write_cfg(sub, {"discovery": {"depth": 1}})
+        cfg = self.load(sub, parent=self.project)
+        self.assertEqual(cfg["discovery"]["depth"], 3)
+        self.assertTrue(any("discovery" in w for w in cfg.warnings))
+
+
 if __name__ == "__main__":
     unittest.main()

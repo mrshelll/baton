@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from lib import budget, output
+from lib import budget, output, projects
 
 DEFAULTS = {
     "limits": dict(budget.DEFAULT_LIMITS),
@@ -25,6 +25,9 @@ DEFAULTS = {
     "inject_on": ["startup", "clear", "compact", "resume", "fork"],
     # Minutes between two automatic handoff requests.
     "cooldown_minutes": 30,
+    # How far down a root is scanned for projects with their own handoff. Read
+    # only from the root: it describes the shape of the tree, not a project.
+    "discovery": {"depth": projects.DEFAULT_DEPTH, "max_dirs": projects.DEFAULT_MAX_DIRS},
     # The one-line receipt proving the hook fired.
     "receipt": True,
     # Language of everything a human reads: section headings, messages and the
@@ -106,6 +109,18 @@ def _merge(base: dict, over: dict, path: Path, warnings: list) -> dict:
                                     f"using {DEFAULTS['limits'][name]}")
                 else:
                     out["limits"][name] = number
+        elif key == "discovery" and isinstance(value, dict):
+            for name, number in value.items():
+                if name not in DEFAULTS["discovery"]:
+                    warnings.append(f"{path.name}: unknown key 'discovery.{name}'; ignoring it")
+                elif name == "depth" and not (_valid_int(number, 1) and number <= 4):
+                    warnings.append(f"{path.name}: 'discovery.depth' must be an integer "
+                                    f"between 1 and 4; using {DEFAULTS['discovery']['depth']}")
+                elif name == "max_dirs" and not _valid_int(number, 50):
+                    warnings.append(f"{path.name}: 'discovery.max_dirs' must be an integer "
+                                    f">= 50; using {DEFAULTS['discovery']['max_dirs']}")
+                else:
+                    out["discovery"][name] = number
         elif key == "document":
             if _safe_path(value):
                 out["document"] = value
@@ -134,8 +149,16 @@ def default_global_path() -> Path:
     return Path.home() / ".claude" / "baton.json"
 
 
-def load(root, global_path=None) -> Config:
-    """Defaults -> global -> project. The project one wins.
+def load(root, global_path=None, parent=None) -> Config:
+    """Defaults -> global -> root -> project. The most specific one wins.
+
+    `parent` is the root's directory when `root` is a subproject of it. The chain
+    exists so a global `language` keeps applying without being repeated in every
+    project folder.
+
+    `discovery` is the exception: it describes the shape of the tree, so only the
+    root gets to set it, and a subproject that tries is told so rather than
+    ignored in silence.
 
     `global_path` exists so tests do not depend on whoever's HOME runs them; in
     production nobody passes it.
@@ -143,9 +166,21 @@ def load(root, global_path=None) -> Config:
     warnings: list = []
     data = dict(DEFAULTS)
     data["limits"] = dict(DEFAULTS["limits"])
+    data["discovery"] = dict(DEFAULTS["discovery"])
     globals_ = Path(global_path) if global_path else default_global_path()
-    for path in (globals_, Path(root) / ".claude" / "baton.json"):
+
+    layers = [globals_]
+    nested = parent is not None and Path(parent) != Path(root)
+    if nested:
+        layers.append(Path(parent) / ".claude" / "baton.json")
+    layers.append(Path(root) / ".claude" / "baton.json")
+
+    for i, path in enumerate(layers):
         raw = _read(path, warnings)
-        if raw:
-            data = _merge(data, raw, path, warnings)
+        if not raw:
+            continue
+        if nested and i == len(layers) - 1 and "discovery" in raw:
+            warnings.append(f"{path.name}: 'discovery' is only read from the root; ignoring it")
+            raw = {k: v for k, v in raw.items() if k != "discovery"}
+        data = _merge(data, raw, path, warnings)
     return Config(data, warnings)
