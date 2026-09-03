@@ -109,14 +109,17 @@ def index_block(root, cards, strings=None, truncated: bool = False) -> str:
     i = s["index"]
     tag = i["tag"]
 
+    names = [sanitize(card.name)[:MAX_NAME] for card in cards]
+    width = max((len(n) for n in names), default=0)
+
     # The disabling is applied to the lines and NOT to the finished block: the
     # names come from directories and are untrusted, but the block's own closing
     # tag is ours and neutering it would leave the index open.
     lines = [
         _disable_closing_tag(
-            i["line"].format(name=sanitize(card.name)[:MAX_NAME], mode=card.mode,
+            i["line"].format(name=name.ljust(width), mode=card.mode.ljust(8),
                              age=_age(card.date, s), rel=sanitize(card.rel)[:200]), tag)
-        for card in cards
+        for name, card in zip(names, cards)
     ]
 
     head = [f'<{tag} root="{sanitize(str(root))}" count="{len(cards)}">', "", i["header"], ""]
