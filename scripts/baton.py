@@ -51,6 +51,17 @@ class Ctx:
     found: "projects.Discovery"
 
 
+def _below(root, here) -> bool:
+    """`here` is strictly under `root`. False on any doubt, so an odd path can
+    only ever cost the old behaviour, never a spurious question."""
+    try:
+        root = Path(root).resolve(strict=False)
+        here = Path(here).resolve(strict=False)
+        return here != root and here.is_relative_to(root)
+    except (OSError, ValueError):
+        return False
+
+
 def _resolve(args, allow_new: bool = False):
     """Root, target, config, paths and strings: the preamble to every subcommand.
 
@@ -65,6 +76,7 @@ def _resolve(args, allow_new: bool = False):
                               document_rel=root_cfg["document"])
     name = getattr(args, "project", None)
 
+    here = Path(args.cwd or os.getcwd())
     if name is None:
         active = projects.read_active(root, found)
         if active is not None:
@@ -76,6 +88,22 @@ def _resolve(args, allow_new: bool = False):
         candidates = list(found.projects)
     else:
         target, candidates = projects.resolve(root, found, name, allow_new=allow_new)
+
+    # Cold start from inside a subfolder. The root has no handoff, no project has
+    # one either, and the session is standing somewhere below: claiming the root
+    # silently is how a handoff ends up in a folder nobody wanted it in, and it
+    # then makes that folder a root forever. Ask instead -- once, because after
+    # this the document exists and everything resolves on its own.
+    if (target is not None and target.is_root and name is None
+            and not storage.Paths(root, document_rel=root_cfg["document"]).document.is_file()
+            and _below(root, here)):
+        strings = output.load_strings(root_cfg["language"])
+        rel = Path(here).resolve(strict=False).relative_to(Path(root).resolve(strict=False))
+        print(strings["cli"]["which_target"].format(here=rel.as_posix(), root=root),
+              file=sys.stderr)
+        print(f"  --project {rel.as_posix()}", file=sys.stderr)
+        print(f"  --project {projects.ROOT_NAME}", file=sys.stderr)
+        return None, ENVIRONMENT
 
     if target is None:
         strings = output.load_strings(root_cfg["language"])

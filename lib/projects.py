@@ -49,24 +49,29 @@ class SubProject:
 class Discovery:
     projects: tuple = ()
     truncated: bool = False
+    # How this discovery was made, so a later cold-start search can walk the same
+    # tree with the same limits instead of inventing its own.
+    root: Path = Path(".")
+    depth: int = DEFAULT_DEPTH
+    max_dirs: int = DEFAULT_MAX_DIRS
+    document_rel: str = DEFAULT_DOCUMENT
 
     def __bool__(self) -> bool:
         return bool(self.projects)
 
 
-def discover(root, depth: int = DEFAULT_DEPTH, max_dirs: int = DEFAULT_MAX_DIRS,
-             document_rel: str = DEFAULT_DOCUMENT) -> Discovery:
-    """Directories under `root` that carry their own handoff.
+def _walk(root: Path, depth: int, max_dirs: int, is_leaf=None):
+    """Breadth-first over the directories under `root`.
 
-    Breadth-first and sorted at every level, so the result is stable rather than
-    filesystem-ordered: an index that reshuffles between sessions reads like
-    something changed when nothing did.
+    Returns `(visited, leaves, truncated)`. `is_leaf(dir)` marks a directory as an
+    endpoint: it is collected in `leaves` and not descended into.
 
-    Never raises. An unreadable directory is skipped and the scan carries on: a
-    broken scan cannot stop a session from starting.
+    One traversal for every caller on purpose. Discovery and the cold-start
+    search have to agree on what a directory even is -- same skips, same depth,
+    same cap -- and two copies of this loop would drift apart on the first fix.
     """
-    root = Path(root)
-    found: list = []
+    visited: list = []
+    leaves: list = []
     seen = 0
     truncated = False
     level = [root]
@@ -87,14 +92,9 @@ def discover(root, depth: int = DEFAULT_DEPTH, max_dirs: int = DEFAULT_MAX_DIRS,
                     continue
                 if directory.is_symlink():
                     continue  # a link can point back up and loop the scan
-                try:
-                    is_project = (directory / document_rel).is_file()
-                except OSError:
-                    continue
-                if is_project:
-                    found.append(SubProject(
-                        rel=directory.relative_to(root).as_posix(),
-                        name=directory.name, path=directory))
+                visited.append(directory)
+                if is_leaf is not None and is_leaf(directory):
+                    leaves.append(directory)
                     continue  # its own subprojects are its business, not the root's
                 following.append(directory)
             if truncated:
@@ -103,7 +103,36 @@ def discover(root, depth: int = DEFAULT_DEPTH, max_dirs: int = DEFAULT_MAX_DIRS,
             break
         level = following
 
-    return Discovery(tuple(sorted(found, key=lambda p: p.rel)), truncated)
+    return visited, leaves, truncated
+
+
+def _as_subproject(root: Path, directory: Path) -> SubProject:
+    return SubProject(rel=directory.relative_to(root).as_posix(),
+                      name=directory.name, path=directory)
+
+
+def discover(root, depth: int = DEFAULT_DEPTH, max_dirs: int = DEFAULT_MAX_DIRS,
+             document_rel: str = DEFAULT_DOCUMENT) -> Discovery:
+    """Directories under `root` that carry their own handoff.
+
+    Sorted at every level, so the result is stable rather than filesystem-ordered:
+    an index that reshuffles between sessions reads like something changed when
+    nothing did.
+
+    Never raises. An unreadable directory is skipped and the scan carries on: a
+    broken scan cannot stop a session from starting.
+    """
+    root = Path(root)
+
+    def has_handoff(directory: Path) -> bool:
+        try:
+            return (directory / document_rel).is_file()
+        except OSError:
+            return False
+
+    _, leaves, truncated = _walk(root, depth, max_dirs, is_leaf=has_handoff)
+    found = sorted((_as_subproject(root, d) for d in leaves), key=lambda p: p.rel)
+    return Discovery(tuple(found), truncated, root, depth, max_dirs, document_rel)
 
 
 @dataclass(frozen=True)
@@ -170,13 +199,46 @@ def resolve(root, discovery: Discovery, name, allow_new: bool = False):
             return None, matches
 
     if allow_new:
+        # A path relative to the root, first: it is unambiguous by construction.
         candidate = root / key
         if candidate.is_dir() and _inside(root, candidate):
-            return Target(root, SubProject(
-                rel=candidate.relative_to(root).as_posix(),
-                name=candidate.name, path=candidate)), []
+            return Target(root, _as_subproject(root, candidate)), []
+
+        # Then by folder NAME. Everything else in this interface -- the index,
+        # `load` -- takes the name, so demanding a full relative path here only
+        # at cold start is a contradiction the user pays for exactly once, on
+        # the one call where nothing exists yet to list as a hint.
+        matches = _candidates_by_name(discovery, key)
+        if len(matches) == 1:
+            return Target(root, matches[0]), []
+        if len(matches) > 1:
+            return None, matches
 
     return None, everything
+
+
+def _candidates_by_name(discovery: Discovery, key: str):
+    """Existing directories under the root whose name matches `key`.
+
+    Only walked when a cold start asked for a folder that is not a project yet,
+    so the extra traversal never happens on the common path.
+    """
+    root = Path(discovery.root)
+
+    def has_handoff(directory: Path) -> bool:
+        try:
+            return (directory / discovery.document_rel).is_file()
+        except OSError:
+            return False
+
+    visited, _, _ = _walk(root, discovery.depth, discovery.max_dirs, is_leaf=has_handoff)
+    folded = key.casefold()
+    for test in (lambda d: d.name.casefold() == folded,
+                 lambda d: folded in d.name.casefold()):
+        matches = [_as_subproject(root, d) for d in visited if test(d)]
+        if matches:
+            return matches
+    return []
 
 
 @dataclass(frozen=True)

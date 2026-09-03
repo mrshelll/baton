@@ -1,6 +1,7 @@
 """A root that holds several projects: what the session receives, and where the
 handoff ends up."""
 import json
+import os
 import sys
 
 from tests.helpers import REPO_ROOT, BaseCase
@@ -279,6 +280,84 @@ class TestWriteTarget(Base):
         self.cli("load", "radar")
         p = self.cli("context")
         self.assertIn(str(radar), p.stdout)
+
+
+class TestColdStart(Base):
+    """The two failures the manual acceptance run in SECOP found.
+
+    A session opened INSIDE a project folder, under a root that is a root only
+    because it has `.claude`, with no handoff anywhere yet.
+    """
+
+    def deep_cli(self, where, *args):
+        """Like self.cli, but standing in `where` -- the whole point here is
+        that the session's directory is not the root."""
+        import subprocess
+        return subprocess.run(
+            [sys.executable, str(REPO_ROOT / "scripts" / "baton.py"), *args],
+            capture_output=True, text=True, cwd=str(where), timeout=60,
+            env={**os.environ, "LC_ALL": "C"})
+
+    def setUp(self):
+        super().setUp()
+        (self.project / ".claude").mkdir(exist_ok=True)
+        self.radar = self.project / "proyectos" / "radar-licitaciones-secop"
+        self.radar.mkdir(parents=True)
+        (self.project / "proyectos" / "instrumentos-control").mkdir(parents=True)
+
+    def draft(self, where):
+        d = where / ".baton" / "local"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "draft.md").write_text("## State\ntrabajo del radar\n", encoding="utf-8")
+
+    def test_project_can_be_named_by_its_folder_name(self):
+        # `--project proyectos/radar-licitaciones-secop` worked, the bare name
+        # did not -- while the index and `load` both take the name. That
+        # contradiction is what blocked the first real session.
+        self.draft(self.radar)
+        p = self.cli("write", "--mode", "memory", "--project", "radar-licitaciones-secop")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue((self.radar / ".baton" / "HANDOFF.md").is_file())
+
+    def test_an_ambiguous_folder_name_creates_nothing(self):
+        (self.project / "otros" / "radar-licitaciones-secop").mkdir(parents=True)
+        self.draft(self.project)
+        p = self.cli("write", "--mode", "memory", "--project", "radar-licitaciones-secop")
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("otros/radar-licitaciones-secop", p.stderr)
+        self.assertFalse((self.radar / ".baton" / "HANDOFF.md").exists())
+
+    def test_a_cold_start_from_inside_a_subfolder_asks(self):
+        # It used to claim the root in silence, which is how SECOP ended up with
+        # a .baton/ that had to be deleted by hand.
+        self.draft(self.project)
+        p = self.deep_cli(self.radar, "write", "--mode", "memory")
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("proyectos/radar-licitaciones-secop", p.stderr)
+        self.assertIn("--project .", p.stderr)
+        self.assertFalse((self.project / ".baton" / "HANDOFF.md").exists())
+
+    def test_context_asks_too_so_the_question_comes_before_the_drafting(self):
+        p = self.deep_cli(self.radar, "context")
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("--project", p.stderr)
+
+    def test_at_the_root_itself_it_still_writes_without_asking(self):
+        self.draft(self.project)
+        p = self.deep_cli(self.project, "write", "--mode", "memory")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue((self.project / ".baton" / "HANDOFF.md").is_file())
+
+    def test_with_the_root_already_enabled_a_subfolder_writes_to_the_root(self):
+        # Nothing to ask here: the root's handoff exists, so that is where a
+        # session below it belongs. This is the ordinary repo case and it must
+        # not have grown a question.
+        self.handoff(self.project)
+        self.draft(self.project)
+        p = self.deep_cli(self.radar, "write", "--mode", "memory")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("trabajo del radar",
+                      (self.project / ".baton" / "HANDOFF.md").read_text(encoding="utf-8"))
 
 
 class TestDoctor(Base):

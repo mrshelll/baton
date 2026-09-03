@@ -92,6 +92,7 @@
     "invalid_mode": "baton: modo inválido '{mode}'. Usa: {valid}",
     "invalid_draft": "baton: el borrador no cumple el contrato. No se ha escrito nada.",
     "which_project": "baton: ¿cuál proyecto? Pasa uno con --project (o `.` para la raíz):",
+    "which_target": "baton: estás dentro de `{here}`, bajo la raíz `{root}`, y ninguno tiene traspaso todavía. ¿A cuál pertenece este? Pregúntaselo al usuario si no lo sabes, y luego pásalo:",
     "unknown_project": "baton: ningún proyecto coincide con '{name}'. Disponibles:",
     "loaded": "baton: `{name}` es ahora el proyecto activo de esta sesión.",
     "no_handoff_yet": "baton: `{name}` todavía no tiene traspaso ({path})."
