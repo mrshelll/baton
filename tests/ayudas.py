@@ -63,10 +63,12 @@ class CasoBase(unittest.TestCase):
         datos = entrada_cruda
         if datos is None:
             datos = json.dumps(payload)
+        # cwd=proyecto a proposito: si el payload no trae "cwd", el hook cae a
+        # os.getcwd(), y sin esto un test escribiria en el repo de verdad.
         p = subprocess.run(
             [sys.executable, str(RAIZ_REPO / "hooks" / "baton_hook.py"), evento],
             input=datos, capture_output=True, text=True, env=_sin_locale(),
-            check=False, timeout=30,
+            cwd=str(self.proyecto), check=False, timeout=30,
         )
         salida = None
         if p.stdout.strip():

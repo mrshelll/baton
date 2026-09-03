@@ -74,3 +74,15 @@ class TestBitacoraDelHook(CasoBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAislamiento(CasoBase):
+    """Un test no puede escribir fuera de su directorio temporal."""
+
+    def test_payload_sin_cwd_no_toca_el_repo_real(self):
+        from tests.ayudas import RAIZ_REPO
+        real = RAIZ_REPO / ".baton" / "local" / "bitacora.jsonl"
+        antes = real.read_bytes() if real.exists() else None
+        self.correr_hook("session-start", {"session_id": "x"})
+        despues = real.read_bytes() if real.exists() else None
+        self.assertEqual(antes, despues, "la suite ha escrito en el repo real")
