@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.4.0 — 2026-09-03
+
+### Added
+- **Roots that hold several projects.** Opening a session at a folder that
+  *contains* projects — a client folder, a software factory, a monorepo — used to
+  make them share one handoff: a single 6,000-character budget for two unrelated
+  bodies of work, and an injection about the wrong project half the time. A
+  project is now any folder under the root with its own `.baton/HANDOFF.md`,
+  discovered by scanning rather than declared anywhere: the same rule that
+  already decides whether a project is enabled, applied one level down.
+- **An index instead of a document** when the root holds several. It says which
+  projects exist, in what mode and how old, and grants nothing: receiving a list
+  of what exists is not receiving context, let alone authorisation to work.
+- **`baton.py load <name>`** delivers one project's handoff — same wrapper, same
+  freshness, same repeat notice, same trim as the hook — and marks it as the
+  session's active project. A bare `/baton` then writes there.
+- **`--project` on `context`, `write` and `show`**, which is also how a project
+  gets its first handoff. The folder must already exist: baton creates `.baton/`
+  inside one, never the project folder itself, so a typo cannot found a project
+  in a directory nobody made.
+- **`discovery` config**, read only from the root because it describes the shape
+  of the tree, not a project. Depth 2 by default; deeper is a decision, since the
+  scan runs on every session start of every project on the machine.
+- `doctor` reports how deep it looked, what it found, whether the scan hit its
+  cap, and which project is active — so "my project does not show up" is never a
+  mystery.
+
+### Changed
+- The activation lives exactly one session: a fresh start (`startup`, `clear`)
+  clears it, a continuation (`compact`, `resume`, `fork`) keeps it. Clearing on
+  compaction would drop the target exactly when the automatic cycle is about to
+  ask for the handoff.
+- With several projects and none active, `write` lists them and stops instead of
+  guessing. The conversation is never used to infer the target: in a session that
+  touched two projects, guessing wrong overwrites a good handoff.
+- The `Stop` hook only interrupts when there is a resolvable target. A session
+  that never loaded a project in a root with no document of its own gets silence,
+  not a question the hook cannot answer on its own.
+- Config chains global → root → subproject, so a global `language` keeps applying
+  without being repeated in every project folder.
+
+A single-project install behaves exactly as before, and that is a test rather
+than a hope: `test_hook_session_start`, `test_auto_cycle` and `test_cli` pass
+untouched.
+
 ## 0.3.2 — 2026-09-03
 
 ### Added

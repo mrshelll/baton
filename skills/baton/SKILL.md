@@ -10,6 +10,20 @@ allowed-tools: Bash, Read, Write, Glob, Grep
 You draft **the body only**. The code composes the final file: frontmatter, date,
 branch, commit and git context. Do not write any of that.
 
+## 0. Which project
+
+If the session started with a `<baton-index>` instead of a handoff, this root
+holds several projects. Do not write anything until you know which one:
+
+- The user named one, or you already ran `baton.py load <name>` this session:
+  that is the target, and `/baton` writes there on its own.
+- Otherwise, ask in one line. Never infer it from which files were touched: in a
+  session that touched two projects, guessing overwrites a good handoff.
+
+Pass `--project <name>` to `context` and `write` only to override the active
+project, or to create the handoff of a project that does not have one yet — the
+folder must already exist.
+
 ## 1. Ask for the context
 
 ```bash

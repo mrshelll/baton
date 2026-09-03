@@ -255,6 +255,63 @@ pero **inerte**: no crea ficheros ni escribe nada. El primer `/baton` lo activa.
 Y **no necesitas git**. Si el proyecto es un repo, baton aprovecha rama y commits.
 Si no lo es, funciona igual sin esos datos.
 
+## Varios proyectos en una carpeta
+
+A veces abres la sesión en una carpeta que *contiene* proyectos en vez de ser uno
+— una carpeta de cliente, una fábrica de software, un monorepo. baton lo maneja
+sin que declares nada:
+
+**Un proyecto es cualquier carpeta bajo la raíz con su propio
+`.baton/HANDOFF.md`.** La convención de rutas da igual; las carpetas sueltas y las
+agrupadas se mezclan sin problema:
+
+```
+CLIENTE-X/                         RAIZ/
+├── radar/                         ├── proyectos/
+│   └── .baton/HANDOFF.md   ✓      │   ├── uno/.baton/HANDOFF.md   ✓
+├── portal/                        │   └── dos/.baton/HANDOFF.md   ✓
+│   └── .baton/HANDOFF.md   ✓      ├── suelto/.baton/HANDOFF.md    ✓
+└── notas/                  ·      └── .baton/HANDOFF.md           ✓ (la raíz)
+```
+
+Al arrancar recibes un **índice**, no un documento: qué proyectos hay, en qué
+modo y de cuándo son. No concede nada ni autoriza nada — todavía no has recibido
+el contexto de ninguno.
+
+```mermaid
+flowchart TD
+    S["Arranca la sesión en una carpeta"] --> D{"¿La raíz tiene<br/>traspaso propio?"}
+    D -->|sí| P{"¿Hay subproyectos<br/>con traspaso?"}
+    D -->|no| Q{"¿Hay subproyectos<br/>con traspaso?"}
+    P -->|no| A["el traspaso<br/><i>igual que siempre</i>"]
+    P -->|sí| B["el traspaso y luego el índice"]
+    Q -->|sí| C["solo el índice"]
+    Q -->|no| E["silencio: aquí no se usa baton"]
+    style A fill:#e6ffe6,stroke:#0a0
+    style C fill:#e6f0ff,stroke:#06a
+```
+
+Cuando dices en cuál trabajas, el modelo ejecuta `baton.py load <nombre>` y
+recibe ese traspaso con el mismo envoltorio, el mismo aviso de frescura y el
+mismo presupuesto que habría aplicado el hook. Eso además lo marca como **el
+proyecto activo de la sesión**, así que un `/baton` a secas escribe ahí.
+
+La activación vive una sesión: un arranque nuevo la limpia, una compactación la
+conserva. Con varios proyectos y ninguno cargado, `/baton` los lista y se detiene
+en vez de adivinar — lo que se estaría adivinando es qué traspaso se sobrescribe.
+
+El escaneo mira **dos niveles hacia abajo** por defecto, que cubre las dos formas
+de arriba. Si tus proyectos están más hondos, se dice una vez en la config de la
+raíz:
+
+```json
+{ "discovery": { "depth": 3 } }
+```
+
+Escanear más hondo cuesta tiempo real en cada arranque de cada proyecto del
+disco, y por eso es una decisión y no un valor por defecto. `baton.py doctor`
+reporta hasta dónde miró, qué encontró y cuál es el proyecto activo.
+
 ## Configuración
 
 Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
@@ -268,7 +325,8 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
   "inject_on": ["startup", "clear", "compact", "resume", "fork"],
   "cooldown_minutes": 30,
   "receipt": true,
-  "language": "es"
+  "language": "es",
+  "discovery": { "depth": 2, "max_dirs": 400 }
 }
 ```
 
@@ -282,6 +340,9 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
 | `inject_on` | los cinco | En qué arranques se inyecta |
 | `cooldown_minutes` | `30` | Mínimo entre dos peticiones automáticas |
 | `receipt` | `true` | La línea que prueba que el hook disparó |
+| `language` | `en` | Idioma de todo lo que lee un humano |
+| `discovery.depth` | `2` | Cuántos niveles se buscan proyectos (1-4). **Solo en la raíz** |
+| `discovery.max_dirs` | `400` | Tope de carpetas miradas por escaneo |
 
 Un fichero de config roto no impide usar baton: avisa nombrando el fichero y sigue
 con los valores buenos. Si escribes `lineas_max`, te sugiere `limits.lines`.
@@ -303,7 +364,7 @@ entrada no confiable:
 ## Comprobar que tu instalación funciona de verdad
 
 Los tests unitarios no ven los fallos que solo aparecen en una instalación real.
-Estas cuatro comprobaciones sí, y son las que destaparon el bug de frescura de la
+Estas cinco comprobaciones sí, y son las que destaparon el bug de frescura de la
 0.3.1 que 211 tests unitarios no habían visto. Llevan dos minutos.
 
 **1. El hook dispara.** Abre una sesión en un proyecto donde hayas usado `/baton`.
@@ -338,6 +399,16 @@ stop          -> silent: nothing pending        (antes de compactar: no molesta)
 post-compact  -> summary saved, handoff pending (guarda y arma)
 stop          -> handoff requested              (pide, una vez)
 ```
+
+**5. Dos proyectos en una carpeta.** Crea `<raiz>/a/` y `<raiz>/b/` y ejecuta
+`/baton a` y `/baton b` desde una sesión abierta en `<raiz>`.
+
+- Abre una sesión nueva en `<raiz>`: recibes el **índice**, sin cuerpo de ningún
+  proyecto. Pregunta por el canario de `a` — todavía no debe saberlo.
+- Di *trabajemos en a*: el modelo ejecuta `baton.py load a`, y solo entonces
+  responde el canario.
+- Ejecuta `/baton`: debe escribir en `<raiz>/a/.baton/HANDOFF.md` y decir esa ruta.
+- `baton.py doctor` lista los dos proyectos y nombra a `a` como activo.
 
 ## Cuando no funciona
 

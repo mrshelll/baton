@@ -255,6 +255,61 @@ it creates no files and writes nothing. The first `/baton` enables it.
 And **you don't need git**. If the project is a repo, baton uses branch and
 commits. If it isn't, it works the same without those facts.
 
+## Several projects in one folder
+
+Sometimes you open the session at a folder that *contains* projects rather than
+being one — a client folder, a software factory, a monorepo. baton handles it
+without you declaring anything:
+
+**A project is any folder under the root with its own `.baton/HANDOFF.md`.** The
+path convention is irrelevant; loose folders and grouped ones mix freely:
+
+```
+CLIENT-X/                          ROOT/
+├── radar/                         ├── projects/
+│   └── .baton/HANDOFF.md   ✓      │   ├── one/.baton/HANDOFF.md   ✓
+├── portal/                        │   └── two/.baton/HANDOFF.md   ✓
+│   └── .baton/HANDOFF.md   ✓      ├── loose/.baton/HANDOFF.md     ✓
+└── notes/                  ·      └── .baton/HANDOFF.md           ✓ (the root)
+```
+
+At session start you get an **index**, not a document: which projects exist, in
+what mode, how old. It grants nothing and authorises nothing — you have not
+received anyone's context yet.
+
+```mermaid
+flowchart TD
+    S["Session starts at a folder"] --> D{"Root has its<br/>own handoff?"}
+    D -->|yes| P{"Subprojects<br/>with a handoff?"}
+    D -->|no| Q{"Subprojects<br/>with a handoff?"}
+    P -->|no| A["the handoff<br/><i>exactly as before</i>"]
+    P -->|yes| B["the handoff, then the index"]
+    Q -->|yes| C["the index only"]
+    Q -->|no| E["silence: baton is not used here"]
+    style A fill:#e6ffe6,stroke:#0a0
+    style C fill:#e6f0ff,stroke:#06a
+```
+
+When you say which project you are working on, the model runs `baton.py load
+<name>` and gets that handoff with the same wrapper, the same freshness notice
+and the same budget the hook would have applied. That also marks it as **this
+session's active project**, so a bare `/baton` writes there.
+
+The activation lives one session: a fresh start clears it, a compaction keeps it.
+With several projects and none loaded, `/baton` lists them and stops rather than
+guessing — the thing being guessed is which handoff gets overwritten.
+
+The scan looks **two levels down** by default, which covers both shapes above. If
+your projects sit deeper, say so once in the root's config:
+
+```json
+{ "discovery": { "depth": 3 } }
+```
+
+Deeper scans cost real time on every session start of every project on the
+machine, which is why it is a decision and not a default. `baton.py doctor`
+reports how deep it looked, what it found and which project is active.
+
 ## Configuration
 
 All optional. `~/.claude/baton.json` for your general preference,
@@ -268,7 +323,8 @@ All optional. `~/.claude/baton.json` for your general preference,
   "inject_on": ["startup", "clear", "compact", "resume", "fork"],
   "cooldown_minutes": 30,
   "receipt": true,
-  "language": "en"
+  "language": "en",
+  "discovery": { "depth": 2, "max_dirs": 400 }
 }
 ```
 
@@ -283,6 +339,8 @@ All optional. `~/.claude/baton.json` for your general preference,
 | `cooldown_minutes` | `30` | Minimum between automatic requests |
 | `receipt` | `true` | The line proving the hook fired |
 | `language` | `en` | Language of everything a human reads |
+| `discovery.depth` | `2` | How far down projects are looked for (1-4). **Root only** |
+| `discovery.max_dirs` | `400` | Cap on directories examined per scan |
 
 **Config keys stay in English in every language.** They are a machine interface,
 and whoever types them shouldn't need to speak another one. `"language"` changes
@@ -306,7 +364,7 @@ baton treats it as untrusted input:
 
 ## Checking your install actually works
 
-Unit tests cannot see the failures that only appear on a real install. These four
+Unit tests cannot see the failures that only appear on a real install. These five
 checks can, and they are the ones that caught the freshness bug in 0.3.1 that 211
 unit tests had missed. They take two minutes.
 
@@ -342,6 +400,16 @@ stop          -> silent: nothing pending        (before compacting: no interrupt
 post-compact  -> summary saved, handoff pending (saves and arms)
 stop          -> handoff requested              (asks, once)
 ```
+
+**5. Two projects in one folder.** Create `<root>/a/` and `<root>/b/` and run
+`/baton a` and `/baton b` from a session opened at `<root>`.
+
+- Open a new session at `<root>`: you get the **index**, and no project body. Ask
+  for the canary of `a` — it must not know it yet.
+- Say *work on a*: the model runs `baton.py load a`, and only then does the canary
+  answer.
+- Run `/baton`: it must write to `<root>/a/.baton/HANDOFF.md` and print that path.
+- `baton.py doctor` lists both projects and names `a` as active.
 
 ## When it doesn't work
 
