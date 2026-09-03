@@ -1,0 +1,44 @@
+{
+  "description": "baton: inyecta el traspaso al arrancar (SessionStart), captura el resumen de la compactacion (PostCompact) y pide al modelo que redacte el traspaso en el primer momento libre (Stop). Ninguno bloquea nunca el arranque: todo camino sale con codigo 0.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact|resume|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/baton_hook.py", "session-start"],
+            "timeout": 10,
+            "statusMessage": "baton: traspaso"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/baton_hook.py", "post-compact"],
+            "timeout": 10,
+            "statusMessage": "baton: captura el resumen"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/baton_hook.py", "stop"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

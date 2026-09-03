@@ -1,0 +1,17 @@
+{
+  "name": "baton",
+  "description": "Marketplace de baton: traspaso de contexto entre sesiones de Claude Code, con documento de tamano acotado por codigo.",
+  "owner": {
+    "name": "Miguelacho",
+    "email": "ingmiguelangel23@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "baton",
+      "description": "Traspaso de contexto que no engorda: documento reescrito entero, presupuesto duro por codigo, modos continuacion/memoria y aviso de frescura contra git.",
+      "version": "0.1.0",
+      "source": "./",
+      "author": { "name": "Miguelacho" }
+    }
+  ]
+}
