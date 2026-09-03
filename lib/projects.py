@@ -177,3 +177,46 @@ def resolve(root, discovery: Discovery, name, allow_new: bool = False):
                 name=candidate.name, path=candidate)), []
 
     return None, everything
+
+
+# --- the session's active project -----------------------------------------
+#
+# It lives one session. `load` writes it and a fresh session start clears it, so
+# a pointer from yesterday cannot silently absorb today's handoff.
+
+
+def active_path(root) -> Path:
+    return Path(root) / ".baton" / "local" / "active.json"
+
+
+def read_active(root, discovery: Discovery):
+    """The active subproject, or None.
+
+    Validated against what exists right now instead of trusted: a folder renamed
+    between sessions would otherwise send the handoff to a path nobody is
+    looking at.
+    """
+    from lib import storage
+    rel = storage.read_json(active_path(root)).get("project")
+    if not rel:
+        return None
+    for project in discovery.projects:
+        if project.rel == rel:
+            return project
+    return None
+
+
+def set_active(root, project: SubProject, session: str = "") -> None:
+    """`session` is diagnostic only. `CLAUDE_SESSION_ID` is not guaranteed to be
+    there, so nothing may depend on it."""
+    from lib import storage
+    storage.write_json(active_path(root), {
+        "project": project.rel, "since": storage.now_utc(), "session": session or "",
+    })
+
+
+def clear_active(root) -> None:
+    try:
+        active_path(root).unlink(missing_ok=True)
+    except OSError:
+        pass

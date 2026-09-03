@@ -138,20 +138,23 @@ def _utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def _read_json(path: Path) -> dict:
+def read_json(path) -> dict:
     """Any garbage -- invalid JSON, valid JSON that is not an object, an empty
     file -- reads back as {}. State files can be touched by an editor, a merge
     or a session killed mid-write, and none of that may raise towards a hook."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
 
 
-def _write_json(path: Path, data: dict, paths: "Paths") -> None:
+def write_json(path, data: dict) -> None:
+    """Creates its own parent: `projects.py` writes state next to a Paths it does
+    not build."""
     try:
-        paths.ensure_local()
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data), encoding="utf-8")
     except OSError:
         pass
@@ -320,7 +323,7 @@ def record_delivery(paths: Paths, fingerprint: str, count: bool = True):
 
     Returns None the first time, or {"times": N, "when": "..."} on a repeat.
     """
-    data = _read_json(paths.deliveries)
+    data = read_json(paths.deliveries)
     if data.get("fingerprint") != fingerprint:
         data = {"fingerprint": fingerprint, "times": 0, "first": now_utc(), "last": ""}
 
@@ -330,7 +333,7 @@ def record_delivery(paths: Paths, fingerprint: str, count: bool = True):
     if count:
         data["times"] = previous + 1
         data["last"] = now_utc()
-        _write_json(paths.deliveries, data, paths)
+        write_json(paths.deliveries, data)
 
     if previous <= 0:
         return None
@@ -361,9 +364,9 @@ def arm_pending(paths: Paths, session_id: str = "") -> None:
     time the user was interrupted, and clearing it here would let every new
     compaction reset it, so the cooldown would hold nothing back.
     """
-    data = _read_json(paths.pending)
+    data = read_json(paths.pending)
     data.update({"armed": now_utc(), "session": session_id, "requested": False})
-    _write_json(paths.pending, data, paths)
+    write_json(paths.pending, data)
 
 
 def has_pending(paths: Paths, cooldown_minutes: int = 30) -> bool:
@@ -373,7 +376,7 @@ def has_pending(paths: Paths, cooldown_minutes: int = 30) -> bool:
     must be avoided is interrupting the user twice in a row, not missing a
     compaction.
     """
-    data = _read_json(paths.pending)
+    data = read_json(paths.pending)
     if not data or data.get("requested"):
         return False
     last = from_utc(data.get("last_request"))
@@ -385,7 +388,7 @@ def has_pending(paths: Paths, cooldown_minutes: int = 30) -> bool:
 
 def consume_pending(paths: Paths) -> None:
     """Mark the flag as used. At most one request per compaction."""
-    data = _read_json(paths.pending)
+    data = read_json(paths.pending)
     data["requested"] = True
     data["last_request"] = now_utc()
-    _write_json(paths.pending, data, paths)
+    write_json(paths.pending, data)

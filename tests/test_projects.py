@@ -153,3 +153,42 @@ class TestResolve(Base):
             with self.subTest(escape=escape):
                 target, _ = self.resolve(escape, allow_new=True)
                 self.assertIsNone(target)
+
+
+class TestActivation(Base):
+    def setUp(self):
+        super().setUp()
+        self.make_project("proyectos/radar")
+        self.found = projects.discover(self.project)
+        self.radar = self.found.projects[0]
+
+    def test_nothing_is_active_to_begin_with(self):
+        self.assertIsNone(projects.read_active(self.project, self.found))
+
+    def test_set_then_read(self):
+        projects.set_active(self.project, self.radar, session="s-1")
+        active = projects.read_active(self.project, self.found)
+        self.assertEqual(active.rel, "proyectos/radar")
+
+    def test_it_lives_under_baton_local(self):
+        projects.set_active(self.project, self.radar)
+        self.assertEqual(projects.active_path(self.project),
+                         self.project / ".baton" / "local" / "active.json")
+
+    def test_clear_removes_it(self):
+        projects.set_active(self.project, self.radar)
+        projects.clear_active(self.project)
+        self.assertIsNone(projects.read_active(self.project, self.found))
+
+    def test_an_activation_pointing_at_a_vanished_folder_is_ignored(self):
+        # Folders get renamed between sessions. A stale pointer must not send a
+        # handoff somewhere nobody is looking.
+        projects.set_active(self.project, self.radar)
+        empty = projects.Discovery()
+        self.assertIsNone(projects.read_active(self.project, empty))
+
+    def test_corrupt_state_reads_as_nothing_active(self):
+        path = projects.active_path(self.project)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json", encoding="utf-8")
+        self.assertIsNone(projects.read_active(self.project, self.found))
