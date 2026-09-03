@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.2 — 2026-09-03
+
+### Added
+- **A section on checking your install actually works**, in both READMEs: the
+  hook fires, memory mode, the canary, and the automatic cycle. These are the
+  checks that caught the 0.3.1 freshness bug, which 211 unit tests had missed.
+  Undocumented, whoever installs baton has no way to tell a working install from
+  a silently broken one.
+- The measured contrast that justifies the design: a real compaction summary of
+  **12,780 bytes** against a 6,000-character budget, distilled to a 45-line
+  handoff and 2,763 characters injected.
+
+### Fixed
+- The two READMEs claimed 200 and 187 tests while the suite ran 214 — three
+  numbers for one fact, with the translations drifted apart. A test now counts
+  the suite and asserts the figure in every badge and body line of both files, so
+  the claim cannot go stale again.
+
 ## 0.3.1 — 2026-09-03
 
 ### Fixed

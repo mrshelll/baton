@@ -1,10 +1,10 @@
 # baton
 
-*[English](README.md) · **Español***
-
 **Traspaso de contexto entre sesiones de Claude Code con un documento que no crece.**
 
-[![tests](https://img.shields.io/badge/tests-187-brightgreen)](tests/)
+*[English](README.md) · **Español***
+
+[![tests](https://img.shields.io/badge/tests-216-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -134,6 +134,12 @@ propio binario lo dice al rechazar los hooks que requieren conversación —
 
 **Como mucho una interrupción por compactación**, con anti-bucle nativo
 (`stop_hook_active`) y un cooldown de 30 minutos configurable.
+
+**El resumen es insumo, nunca producto.** Un resumen de compactación real ocupó
+**12.780 bytes** frente a un presupuesto de 6.000 caracteres. Guardarlo tal cual
+como traspaso —lo cómodo, y lo que haría un diseño ingenuo— duplicaría el tope y
+ni siquiera cabría en el techo de 8.000. En su lugar se destila: esa misma sesión
+produjo un traspaso de 45 líneas, 2.763 caracteres inyectados.
 
 ## Frescura: avisar, nunca caducar
 
@@ -294,6 +300,45 @@ entrada no confiable:
 - El modo se lee **solo** del frontmatter, que escribe el código: un cuerpo que
   finja otro modo no cambia nada.
 
+## Comprobar que tu instalación funciona de verdad
+
+Los tests unitarios no ven los fallos que solo aparecen en una instalación real.
+Estas cuatro comprobaciones sí, y son las que destaparon el bug de frescura de la
+0.3.1 que 211 tests unitarios no habían visto. Llevan dos minutos.
+
+**1. El hook dispara.** Abre una sesión en un proyecto donde hayas usado `/baton`.
+La línea de arranque debe decir:
+
+```
+SessionStart:startup says: baton: handoff injected -- memory mode, N lines
+```
+
+Si no aparece, el hook no disparó. Ejecuta `doctor`.
+
+**2. El modo memoria — la que define el producto.** Con un traspaso en `memory`,
+abre una sesión nueva y escribe algo trivial y sin relación, por ejemplo `hola`.
+
+- ✅ Saluda en una línea y espera.
+- ❌ Abre ficheros, propone un plan, o pregunta «¿seguimos con X?».
+
+**3. El canario — demuestra que el contexto llegó al modelo, no solo al fichero.**
+Mete una línea como `canary: xylophone-7731` en `## Estado` y pregunta a una sesión
+nueva *qué dice el canario*. Si responde, la inyección funciona. Si no, el traspaso
+llegó al fichero pero nunca al contexto: el fallo que ningún test unitario ve.
+
+**4. El ciclo automático.** Ejecuta `/compact`. Tras tu siguiente intercambio baton
+debería pedirte el traspaso solo, y **no volver a pedirlo**. Comprueba el rastro:
+
+```bash
+cat .baton/local/log.jsonl
+```
+
+```
+stop          -> silent: nothing pending        (antes de compactar: no molesta)
+post-compact  -> summary saved, handoff pending (guarda y arma)
+stop          -> handoff requested              (pide, una vez)
+```
+
 ## Cuando no funciona
 
 Un hook que no dispara no da error: no da nada. Por eso hay cuatro capas:
@@ -318,7 +363,7 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 ./tests/run.sh
 ```
 
-187 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+216 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.

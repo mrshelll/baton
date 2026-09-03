@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-200-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-216-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -134,6 +134,12 @@ context is available"*.
 
 **At most one interruption per compaction**, with the harness's native loop guard
 (`stop_hook_active`) and a configurable 30-minute cooldown.
+
+**The summary is input, never the product.** A real compaction summary measured
+**12,780 bytes** against a 6,000-character budget. Storing it as the handoff — the
+easy thing, and what a naive design would do — would double the cap and not even
+fit the 8,000-character ceiling. It gets distilled instead: that same session
+produced a 45-line handoff, 2,763 characters injected.
 
 ## Freshness: flag it, never expire it
 
@@ -298,6 +304,45 @@ baton treats it as untrusted input:
 - The mode is read **only** from the frontmatter, which the code writes: a body
   faking another mode changes nothing.
 
+## Checking your install actually works
+
+Unit tests cannot see the failures that only appear on a real install. These four
+checks can, and they are the ones that caught the freshness bug in 0.3.1 that 211
+unit tests had missed. They take two minutes.
+
+**1. The hook fires.** Open a session in a project where you have run `/baton`.
+The startup line should read:
+
+```
+SessionStart:startup says: baton: handoff injected -- memory mode, N lines
+```
+
+No line means the hook did not fire. Run `doctor`.
+
+**2. Memory mode — the one that defines the product.** With a `memory` handoff,
+open a fresh session and type something trivial and unrelated, like `hello`.
+
+- ✅ It greets in one line and waits.
+- ❌ It opens files, proposes a plan, or asks "shall we carry on with X?".
+
+**3. The canary — proves the context reached the model, not just the file.** Put a
+line like `canary: xylophone-7731` in `## State`, then ask a fresh session *what
+does the canary say*. If it answers, the injection works. If it doesn't, the
+handoff reached the file but never the context — the failure no unit test sees.
+
+**4. The automatic cycle.** Run `/compact`. After your next exchange baton should
+ask for the handoff on its own, and **not ask again**. Check the trail:
+
+```bash
+cat .baton/local/log.jsonl
+```
+
+```
+stop          -> silent: nothing pending        (before compacting: no interruption)
+post-compact  -> summary saved, handoff pending (saves and arms)
+stop          -> handoff requested              (asks, once)
+```
+
 ## When it doesn't work
 
 A hook that doesn't fire gives no error: it gives nothing. Hence four layers:
@@ -322,7 +367,7 @@ Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
 ./tests/run.sh
 ```
 
-200 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+216 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case

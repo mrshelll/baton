@@ -52,6 +52,48 @@ class TestReadme(unittest.TestCase):
             with self.subTest(file=name):
                 self.assertTrue("Restart Claude Code" in text or "Reinicia Claude Code" in text)
 
+    def test_the_test_count_is_true_in_both_readmes(self):
+        """A hardcoded number goes stale on the very next commit.
+
+        It already did: the two READMEs claimed 200 and 187 while the suite ran
+        214. Three numbers for one fact, and the two translations had drifted
+        apart from each other -- the standing risk of keeping two READMEs. This
+        test removes the possibility rather than the symptom.
+        """
+        import unittest as ut
+        real = ut.TestLoader().discover(str(REPO_ROOT / "tests"),
+                                        top_level_dir=str(REPO_ROOT)).countTestCases()
+        claims = {
+            "README.md badge": r"badge/tests-(\d+)-",
+            "README.md text": r"^(\d+) tests on the stdlib",
+            "README.es.md badge": r"badge/tests-(\d+)-",
+            "README.es.md text": r"^(\d+) tests con",
+        }
+        # findall, not search: a stale duplicate further down the file would
+        # otherwise slip through -- which is exactly what happened once.
+        for where, pattern in claims.items():
+            name = where.split()[0]
+            text = (REPO_ROOT / name).read_text(encoding="utf-8")
+            found = re.findall(pattern, text, re.MULTILINE)
+            with self.subTest(where=where):
+                self.assertTrue(found, f"{where}: no test count found")
+                for n in found:
+                    self.assertEqual(int(n), real,
+                                     f"{where} says {n}, the suite has {real}")
+
+    def test_both_document_the_manual_acceptance_checks(self):
+        """The checks that unit tests cannot replace have to be written down.
+
+        They are what caught the freshness bug in 0.3.1, which 211 unit tests
+        had not seen. Undocumented, whoever installs this has no way to tell a
+        working install from a silent one.
+        """
+        for name, text, _ in self.each():
+            with self.subTest(file=name):
+                lowered = text.lower()
+                self.assertIn("canary", lowered, "the canary check is missing")
+                self.assertTrue("memory mode" in lowered or "modo memoria" in lowered)
+
     def test_the_two_readmes_link_to_each_other(self):
         self.assertIn("README.es.md", (REPO_ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertIn("README.md", (REPO_ROOT / "README.es.md").read_text(encoding="utf-8"))
