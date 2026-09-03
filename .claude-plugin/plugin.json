@@ -1,6 +1,6 @@
 {
   "name": "baton",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Traspaso de contexto entre sesiones de Claude Code con un documento que NO crece: se reescribe entero cada vez, con presupuesto duro de lineas y caracteres validado por codigo. Dos modos: continuacion (retoma la tarea a medias) y memoria (ten esto presente y ESPERA instrucciones). Los campos deterministas -rama, commit, ficheros sin commitear, fecha- los genera el codigo desde git, no el modelo. Al inyectar avisa de la frescura comparando con git, pero nunca caduca.",
   "author": {
     "name": "Miguelacho",
@@ -9,5 +9,13 @@
   "homepage": "https://github.com/mrshelll/baton",
   "repository": "https://github.com/mrshelll/baton",
   "license": "MIT",
-  "keywords": ["handoff", "traspaso", "context", "session", "compaction", "memoria", "git"]
+  "keywords": [
+    "handoff",
+    "traspaso",
+    "context",
+    "session",
+    "compaction",
+    "memoria",
+    "git"
+  ]
 }

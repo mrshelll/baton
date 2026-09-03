@@ -146,3 +146,14 @@ class TestNoSeCuentaASiMismo(CasoBase):
         (self.proyecto / "codigo.py").write_text("y", encoding="utf-8")
         s = gitinfo.snapshot(self.proyecto)
         self.assertEqual(s.sucios, ["codigo.py"])
+
+    def test_la_frescura_tampoco_cuenta_los_ficheros_de_baton(self):
+        self.init_git()
+        viejo = gitinfo.snapshot(self.proyecto).commit
+        (self.proyecto / ".baton").mkdir()
+        (self.proyecto / ".baton" / "TRASPASO.md").write_text("x", encoding="utf-8")
+        (self.proyecto / "codigo.py").write_text("y", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "cambios")
+        f = gitinfo.frescura(self.proyecto, gitinfo.ahora_iso(), "main", viejo)
+        self.assertEqual(f.ficheros_cambiados, 1, "solo codigo.py es trabajo del usuario")

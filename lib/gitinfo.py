@@ -27,6 +27,16 @@ TIMEOUT = 3
 #: Cuantos ficheros sucios se nombran antes de resumir. El resto se cuenta.
 MAX_SUCIOS = 10
 
+#: Los ficheros del propio baton no son trabajo del usuario. Sin filtrarlos,
+#: cada traspaso informaria de que baton acaba de escribir un traspaso, y el
+#: aviso de frescura contaria como "codigo que ha cambiado" sus propios
+#: ficheros. Ruido en los dos sitios, y por la misma razon.
+PREFIJO_PROPIO = ".baton/"
+
+
+def _es_propio(nombre: str) -> bool:
+    return nombre == PREFIJO_PROPIO or nombre.startswith(PREFIJO_PROPIO)
+
 SIN_GIT = "sin-git"
 
 _hay_git = None
@@ -99,12 +109,8 @@ def snapshot(raiz) -> Snapshot:
     for entrada in crudo.split("\0"):
         if len(entrada) > 3:
             nombre = entrada[3:]
-            # Los ficheros del propio baton no son trabajo del usuario. Sin
-            # esto, cada traspaso empezaria informando de que baton ha escrito
-            # un traspaso: ruido garantizado en todos ellos.
-            if nombre == ".baton/" or nombre.startswith(".baton/"):
-                continue
-            sucios.append(nombre)
+            if not _es_propio(nombre):
+                sucios.append(nombre)
 
     adelanto = ""
     conteo = _git(raiz, "rev-list", "--count", "--left-right", "@{upstream}...HEAD")
@@ -237,6 +243,6 @@ def frescura(raiz, fecha_doc, rama_doc, commit_doc) -> Frescura:
                 nuevos = 0
             if nuevos:
                 lista = _git(raiz, "diff", "--name-only", "-z", f"{commit_doc}..HEAD") or ""
-                cambiados = len([x for x in lista.split("\0") if x])
+                cambiados = len([x for x in lista.split("\0") if x and not _es_propio(x)])
 
     return Frescura(True, dias, rama_doc or "", s.rama, nuevos, cambiados, perdido)
