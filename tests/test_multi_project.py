@@ -226,6 +226,61 @@ class TestLoad(Base):
         self.assertIn("already been delivered", p.stdout)
 
 
+class TestWriteTarget(Base):
+    def draft(self, where, text="## State\nwhere we are, concretely\n"):
+        d = where / ".baton" / "local"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "draft.md").write_text(text, encoding="utf-8")
+
+    def test_it_writes_into_the_active_project(self):
+        radar = self.sub("proyectos/radar")
+        self.sub("proyectos/instrumentos")
+        self.cli("load", "radar")
+        self.draft(radar)
+        p = self.cli("write", "--mode", "memory")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn(str(radar), p.stdout)
+        self.assertIn("where we are, concretely",
+                      (radar / ".baton" / "HANDOFF.md").read_text(encoding="utf-8"))
+
+    def test_with_projects_and_none_active_it_refuses_and_lists_them(self):
+        self.sub("proyectos/radar")
+        self.sub("proyectos/instrumentos")
+        self.draft(self.project)
+        p = self.cli("write", "--mode", "memory")
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("radar", p.stderr)
+        self.assertIn("instrumentos", p.stderr)
+
+    def test_an_explicit_project_bootstraps_a_folder_with_no_handoff(self):
+        self.sub("proyectos/radar")
+        nuevo = self.project / "proyectos" / "nuevo"
+        nuevo.mkdir(parents=True)
+        self.draft(nuevo)
+        p = self.cli("write", "--mode", "memory", "--project", "proyectos/nuevo")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue((nuevo / ".baton" / "HANDOFF.md").is_file())
+
+    def test_a_typo_does_not_found_a_project_in_a_folder_nobody_made(self):
+        self.sub("proyectos/radar")
+        self.draft(self.project)
+        p = self.cli("write", "--mode", "memory", "--project", "proyectos/nuevoo")
+        self.assertEqual(p.returncode, 3)
+        self.assertFalse((self.project / "proyectos" / "nuevoo").exists())
+
+    def test_a_single_project_root_is_unaffected(self):
+        self.draft(self.project)
+        p = self.cli("write", "--mode", "memory")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue((self.project / ".baton" / "HANDOFF.md").is_file())
+
+    def test_context_reports_the_target_project(self):
+        radar = self.sub("proyectos/radar")
+        self.cli("load", "radar")
+        p = self.cli("context")
+        self.assertIn(str(radar), p.stdout)
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()
