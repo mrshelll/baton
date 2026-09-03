@@ -1,15 +1,15 @@
 ---
-description: Escribe el traspaso de contexto de esta sesión — documento de tamaño acotado, listo para arrancar la siguiente sin perder el hilo.
-argument-hint: "[memoria|continuacion] [nota corta opcional]"
+description: Write this session's context handoff — a size-capped document, ready for the next session to pick up without losing the thread.
+argument-hint: "[memory|continue] [optional short note]"
 allowed-tools: Bash, Read, Write, Glob, Grep
 ---
 
-Escribe el traspaso de esta sesión siguiendo **exactamente** el procedimiento de
-la skill `baton` (`skills/baton/SKILL.md` de este plugin). No improvises un
-formato propio: el documento lo compone y valida el código, no tú.
+Write this session's handoff following **exactly** the procedure in the `baton`
+skill (`skills/baton/SKILL.md` in this plugin). Do not improvise a format of your
+own: the code composes and validates the document, not you.
 
-Argumentos recibidos: $ARGUMENTS
+Arguments received: $ARGUMENTS
 
-Si los argumentos empiezan por `memoria` o `continuacion`, ese es el modo y no
-tienes que decidirlo. El resto del texto, si lo hay, es una nota del usuario
-sobre qué quiere que quede recogido.
+If the arguments start with `memory` or `continue`, that is the mode and you do
+not have to decide it. Any remaining text is a note from the user about what they
+want captured.

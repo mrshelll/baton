@@ -1,84 +1,101 @@
-"""Config: global + proyecto, con precedencia clave a clave y fallo legible."""
+"""Config: global plus project, key-by-key precedence and readable failure."""
 import json
 import sys
 import unittest
 
-from tests.ayudas import RAIZ_REPO, CasoBase
+from tests.helpers import REPO_ROOT, BaseCase
 
-sys.path.insert(0, str(RAIZ_REPO))
-from lib import config as cfg  # noqa: E402
+sys.path.insert(0, str(REPO_ROOT))
+from lib import config  # noqa: E402
 
 
-class TestCarga(CasoBase):
-    def escribir(self, cual, datos):
-        if cual == "global":
-            ruta = self.proyecto / "global-baton.json"
+class TestLoad(BaseCase):
+    def write(self, which, data):
+        if which == "global":
+            path = self.project / "global-baton.json"
         else:
-            (self.proyecto / ".claude").mkdir(exist_ok=True)
-            ruta = self.proyecto / ".claude" / "baton.json"
-        ruta.write_text(json.dumps(datos) if not isinstance(datos, str) else datos,
-                        encoding="utf-8")
-        return ruta
+            (self.project / ".claude").mkdir(exist_ok=True)
+            path = self.project / ".claude" / "baton.json"
+        path.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
+        return path
 
-    def cargar(self, con_global=None):
-        return cfg.cargar(self.proyecto, ruta_global=con_global)
+    def load(self, global_path=None):
+        return config.load(self.project, global_path=global_path)
 
-    def test_sin_ficheros_devuelve_los_defaults(self):
-        c = self.cargar()
-        self.assertEqual(c["topes"], cfg.POR_DEFECTO["topes"])
-        self.assertEqual(c.avisos, [])
+    def test_no_files_gives_the_defaults(self):
+        c = self.load()
+        self.assertEqual(c["limits"], config.DEFAULTS["limits"])
+        self.assertEqual(c.warnings, [])
 
-    def test_el_proyecto_pisa_al_global(self):
-        g = self.escribir("global", {"topes": {"lineas": 90}})
-        self.escribir("proyecto", {"topes": {"lineas": 200}})
-        self.assertEqual(self.cargar(g)["topes"]["lineas"], 200)
+    def test_project_beats_global(self):
+        g = self.write("global", {"limits": {"lines": 90}})
+        self.write("project", {"limits": {"lines": 200}})
+        self.assertEqual(self.load(g)["limits"]["lines"], 200)
 
-    def test_sobreescribir_un_tope_no_borra_los_otros(self):
-        # Merge de un nivel: tocar `lineas` no puede dejarte sin `caracteres`.
-        self.escribir("proyecto", {"topes": {"lineas": 60}})
-        c = self.cargar()
-        self.assertEqual(c["topes"]["lineas"], 60)
-        self.assertEqual(c["topes"]["caracteres"], cfg.POR_DEFECTO["topes"]["caracteres"])
+    def test_overriding_one_limit_keeps_the_others(self):
+        # One-level merge: touching `lines` cannot leave you without `characters`.
+        self.write("project", {"limits": {"lines": 60}})
+        c = self.load()
+        self.assertEqual(c["limits"]["lines"], 60)
+        self.assertEqual(c["limits"]["characters"], config.DEFAULTS["limits"]["characters"])
 
-    def test_json_roto_avisa_nombrando_el_fichero_y_sigue(self):
-        self.escribir("proyecto", "{esto no es json")
-        c = self.cargar()
-        self.assertEqual(c["topes"], cfg.POR_DEFECTO["topes"])
-        self.assertTrue(any("baton.json" in a for a in c.avisos), c.avisos)
+    def test_broken_json_warns_naming_the_file_and_carries_on(self):
+        self.write("project", "{not json")
+        c = self.load()
+        self.assertEqual(c["limits"], config.DEFAULTS["limits"])
+        self.assertTrue(any("baton.json" in w for w in c.warnings), c.warnings)
 
-    def test_json_que_es_una_lista_no_rompe(self):
-        self.escribir("proyecto", [1, 2, 3])
-        c = self.cargar()
-        self.assertEqual(c["topes"], cfg.POR_DEFECTO["topes"])
-        self.assertTrue(c.avisos)
+    def test_json_that_is_a_list_does_not_break(self):
+        self.write("project", [1, 2, 3])
+        self.assertTrue(self.load().warnings)
 
-    def test_clave_desconocida_sugiere_la_correcta(self):
-        self.escribir("proyecto", {"lineas_max": 60})
-        c = self.cargar()
-        self.assertTrue(any("lineas_max" in a for a in c.avisos), c.avisos)
-        self.assertTrue(any("topes.lineas" in a for a in c.avisos), c.avisos)
+    def test_unknown_key_suggests_the_right_one(self):
+        self.write("project", {"lines_max": 60})
+        joined = " ".join(self.load().warnings)
+        self.assertIn("lines_max", joined)
+        self.assertIn("limits.lines", joined)
 
-    def test_ruta_de_documento_absoluta_se_rechaza(self):
-        self.escribir("proyecto", {"documento": "/etc/passwd"})
-        c = self.cargar()
-        self.assertEqual(c["documento"], cfg.POR_DEFECTO["documento"])
-        self.assertTrue(any("fuera del proyecto" in a for a in c.avisos), c.avisos)
+    def test_spanish_key_from_an_older_config_is_recognised(self):
+        # baton spoke Spanish before 0.3.0; pointing at the new key beats an
+        # unhelpful "unknown key".
+        self.write("project", {"topes": {"lineas": 60}})
+        joined = " ".join(self.load().warnings)
+        self.assertIn("limits", joined)
 
-    def test_ruta_de_documento_con_dos_puntos_se_rechaza(self):
-        self.escribir("proyecto", {"documento": "../../fuera.md"})
-        c = self.cargar()
-        self.assertEqual(c["documento"], cfg.POR_DEFECTO["documento"])
-        self.assertTrue(c.avisos)
+    def test_absolute_document_path_is_rejected(self):
+        self.write("project", {"document": "/etc/passwd"})
+        c = self.load()
+        self.assertEqual(c["document"], config.DEFAULTS["document"])
+        self.assertTrue(any("outside the project" in w for w in c.warnings), c.warnings)
 
-    def test_historial_cero_desactiva_sin_romper(self):
-        self.escribir("proyecto", {"historial_max": 0})
-        self.assertEqual(self.cargar()["historial_max"], 0)
+    def test_document_path_with_dotdot_is_rejected(self):
+        self.write("project", {"document": "../../outside.md"})
+        self.assertEqual(self.load()["document"], config.DEFAULTS["document"])
 
-    def test_tope_no_numerico_se_ignora_con_aviso(self):
-        self.escribir("proyecto", {"topes": {"lineas": "muchas"}})
-        c = self.cargar()
-        self.assertEqual(c["topes"]["lineas"], cfg.POR_DEFECTO["topes"]["lineas"])
-        self.assertTrue(c.avisos)
+    def test_history_zero_disables_without_breaking(self):
+        self.write("project", {"history_max": 0})
+        self.assertEqual(self.load()["history_max"], 0)
+
+    def test_non_numeric_limit_is_ignored_with_a_warning(self):
+        self.write("project", {"limits": {"lines": "many"}})
+        c = self.load()
+        self.assertEqual(c["limits"]["lines"], config.DEFAULTS["limits"]["lines"])
+        self.assertTrue(c.warnings)
+
+    def test_true_is_not_a_valid_number(self):
+        # bool subclasses int in Python; without the guard `True` would pass.
+        self.write("project", {"limits": {"lines": True}})
+        self.assertEqual(self.load()["limits"]["lines"], config.DEFAULTS["limits"]["lines"])
+
+    def test_language_is_honoured(self):
+        self.write("project", {"language": "es"})
+        self.assertEqual(self.load()["language"], "es")
+
+    def test_unknown_language_falls_back_and_lists_what_exists(self):
+        self.write("project", {"language": "klingon"})
+        c = self.load()
+        self.assertEqual(c["language"], config.DEFAULTS["language"])
+        self.assertTrue(any("available" in w for w in c.warnings), c.warnings)
 
 
 if __name__ == "__main__":

@@ -1,138 +1,151 @@
-"""Configuracion de baton: defaults, global y proyecto.
+"""baton's configuration: defaults, global and per project.
 
-Dos ficheros opcionales, misma forma que `settings.json` de Claude Code para
-que no haya un concepto nuevo que aprender:
+Two optional files, shaped like Claude Code's own `settings.json` so there is no
+new concept to learn:
 
-    ~/.claude/baton.json              tu preferencia en todos los proyectos
-    <proyecto>/.claude/baton.json     solo en ese repo; gana sobre el global
+    ~/.claude/baton.json              your preference across every project
+    <project>/.claude/baton.json      that repo only; wins over the global one
 
-Sin ninguno de los dos, funcionan los defaults. Una config rota nunca impide
-usar baton: se avisa nombrando el fichero y se sigue con los valores buenos.
+With neither, the defaults apply. A broken config never blocks baton: it warns
+naming the file and carries on with the good values.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from lib import presupuesto
+from lib import budget, output
 
-POR_DEFECTO = {
-    "topes": dict(presupuesto.TOPES_POR_DEFECTO),
-    # Relativo a la raiz del proyecto, siempre.
-    "documento": ".baton/TRASPASO.md",
-    "historial_max": 10,
-    # En que arranques se inyecta el traspaso.
-    "inyectar_en": ["startup", "clear", "compact", "resume", "fork"],
-    # Minutos entre dos peticiones automaticas de traspaso.
-    "cooldown_minutos": 30,
-    # El recibo de una linea que demuestra que el hook disparo.
-    "recibo": True,
+DEFAULTS = {
+    "limits": dict(budget.DEFAULT_LIMITS),
+    # Always relative to the project root.
+    "document": ".baton/HANDOFF.md",
+    "history_max": 10,
+    # Which session starts get the handoff injected.
+    "inject_on": ["startup", "clear", "compact", "resume", "fork"],
+    # Minutes between two automatic handoff requests.
+    "cooldown_minutes": 30,
+    # The one-line receipt proving the hook fired.
+    "receipt": True,
+    # Language of everything a human reads: section headings, messages and the
+    # instructions injected into the model. Config keys stay in English.
+    "language": output.DEFAULT_LANGUAGE,
 }
 
-#: Errores de tecleo que merecen una pista concreta en vez de un "clave
-#: desconocida" que no ayuda a nadie.
-SUGERENCIAS = {
-    "lineas_max": "topes.lineas",
-    "max_lineas": "topes.lineas",
-    "caracteres_max": "topes.caracteres",
-    "tokens_max": "topes.tokens",
-    "max_tokens": "topes.tokens",
-    "historial": "historial_max",
-    "ruta": "documento",
+#: Typos worth a concrete hint instead of an unhelpful "unknown key".
+SUGGESTIONS = {
+    "topes": "limits",
+    "max_lines": "limits.lines",
+    "lines_max": "limits.lines",
+    "max_characters": "limits.characters",
+    "max_tokens": "limits.tokens",
+    "history": "history_max",
+    "path": "document",
+    "lang": "language",
+    "locale": "language",
 }
 
 
 class Config(dict):
-    """Un dict con la lista de problemas encontrados al cargarlo."""
+    """A dict carrying the list of problems found while loading it."""
 
-    def __init__(self, datos, avisos=None):
-        super().__init__(datos)
-        self.avisos = list(avisos or [])
+    def __init__(self, data, warnings=None):
+        super().__init__(data)
+        self.warnings = list(warnings or [])
 
 
-def _leer(ruta: Path, avisos: list):
-    """Lee un JSON de config. Cualquier problema se convierte en aviso."""
-    if ruta is None or not ruta.is_file():
+def _read(path: Path, warnings: list):
+    """Read a config JSON. Any problem becomes a warning."""
+    if path is None or not path.is_file():
         return {}
     try:
-        datos = json.loads(ruta.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        avisos.append(f"{ruta.name}: no se pudo leer ({type(exc).__name__}); uso los valores por defecto")
+        warnings.append(f"{path.name}: could not be read ({type(exc).__name__}); using defaults")
         return {}
-    if not isinstance(datos, dict):
-        avisos.append(f"{ruta.name}: se esperaba un objeto JSON y hay {type(datos).__name__}; uso los valores por defecto")
+    if not isinstance(data, dict):
+        warnings.append(
+            f"{path.name}: expected a JSON object, found {type(data).__name__}; using defaults")
         return {}
-    return datos
+    return data
 
 
-def _fusionar(base: dict, encima: dict, ruta: Path, avisos: list) -> dict:
-    """Merge de UN nivel: `topes` se fusiona clave a clave, el resto se pisa.
-
-    Un merge de un nivel es justo lo que hace falta: tocar `topes.lineas` no
-    puede dejarte sin `topes.caracteres`, y a la vez no hay que razonar sobre
-    fusiones profundas que nadie necesita.
-    """
-    salida = {k: (dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
-    for clave, valor in encima.items():
-        if clave in SUGERENCIAS:
-            avisos.append(f"{ruta.name}: clave desconocida '{clave}'. Querias '{SUGERENCIAS[clave]}'?")
-            continue
-        if clave not in POR_DEFECTO:
-            avisos.append(f"{ruta.name}: clave desconocida '{clave}'; la ignoro")
-            continue
-        if clave == "topes" and isinstance(valor, dict):
-            for nombre, numero in valor.items():
-                if nombre not in POR_DEFECTO["topes"]:
-                    avisos.append(f"{ruta.name}: tope desconocido 'topes.{nombre}'; lo ignoro")
-                elif not _entero_valido(numero, 1):
-                    avisos.append(f"{ruta.name}: 'topes.{nombre}' debe ser un entero positivo; uso {POR_DEFECTO['topes'][nombre]}")
-                else:
-                    salida["topes"][nombre] = numero
-        elif clave == "documento":
-            if not _ruta_segura(valor):
-                avisos.append(f"{ruta.name}: 'documento' apunta fuera del proyecto; uso {POR_DEFECTO['documento']}")
-            else:
-                salida["documento"] = valor
-        elif clave == "historial_max":
-            if _entero_valido(valor, 0):
-                salida["historial_max"] = valor
-            else:
-                avisos.append(f"{ruta.name}: 'historial_max' debe ser un entero >= 0; uso {POR_DEFECTO['historial_max']}")
-        else:
-            salida[clave] = valor
-    return salida
+def _valid_int(value, minimum: int) -> bool:
+    """bool is a subclass of int in Python, so `True` would pass as a number.
+    Excluding it here once keeps that trap out of every call site."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= minimum
 
 
-def _entero_valido(valor, minimo: int) -> bool:
-    """bool es subclase de int en Python: sin descartarlo, un `true` en el JSON
-    colaria como el numero 1."""
-    return isinstance(valor, int) and not isinstance(valor, bool) and valor >= minimo
-
-
-def _ruta_segura(valor) -> bool:
-    """El documento vive DENTRO del proyecto. Sin absolutas ni '..'."""
-    if not isinstance(valor, str) or not valor.strip():
+def _safe_path(value) -> bool:
+    """The document lives INSIDE the project. No absolutes and no '..'."""
+    if not isinstance(value, str) or not value.strip():
         return False
-    p = Path(valor)
+    p = Path(value)
     return not p.is_absolute() and ".." not in p.parts
 
 
-def ruta_global_por_defecto() -> Path:
+def _merge(base: dict, over: dict, path: Path, warnings: list) -> dict:
+    """One-level merge: `limits` merges key by key, everything else replaces.
+
+    One level is exactly what is needed: touching `limits.lines` must not leave
+    you without `limits.characters`, and at the same time nobody has to reason
+    about deep merges that no one asked for.
+    """
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
+    for key, value in over.items():
+        if key in SUGGESTIONS:
+            warnings.append(f"{path.name}: unknown key '{key}'. Did you mean '{SUGGESTIONS[key]}'?")
+        elif key not in DEFAULTS:
+            warnings.append(f"{path.name}: unknown key '{key}'; ignoring it")
+        elif key == "limits" and isinstance(value, dict):
+            for name, number in value.items():
+                if name not in DEFAULTS["limits"]:
+                    warnings.append(f"{path.name}: unknown limit 'limits.{name}'; ignoring it")
+                elif not _valid_int(number, 1):
+                    warnings.append(f"{path.name}: 'limits.{name}' must be a positive integer; "
+                                    f"using {DEFAULTS['limits'][name]}")
+                else:
+                    out["limits"][name] = number
+        elif key == "document":
+            if _safe_path(value):
+                out["document"] = value
+            else:
+                warnings.append(f"{path.name}: 'document' points outside the project; "
+                                f"using {DEFAULTS['document']}")
+        elif key == "history_max":
+            if _valid_int(value, 0):
+                out["history_max"] = value
+            else:
+                warnings.append(f"{path.name}: 'history_max' must be an integer >= 0; "
+                                f"using {DEFAULTS['history_max']}")
+        elif key == "language":
+            if isinstance(value, str) and value in output.available_languages():
+                out["language"] = value
+            else:
+                warnings.append(
+                    f"{path.name}: unknown language {value!r}; available: "
+                    f"{', '.join(output.available_languages())}")
+        else:
+            out[key] = value
+    return out
+
+
+def default_global_path() -> Path:
     return Path.home() / ".claude" / "baton.json"
 
 
-def cargar(raiz, ruta_global=None) -> Config:
-    """Defaults -> global -> proyecto. El del proyecto manda.
+def load(root, global_path=None) -> Config:
+    """Defaults -> global -> project. The project one wins.
 
-    `ruta_global` existe para que los tests no dependan del HOME de quien los
-    corre; en produccion nadie la pasa.
+    `global_path` exists so tests do not depend on whoever's HOME runs them; in
+    production nobody passes it.
     """
-    avisos: list = []
-    datos = dict(POR_DEFECTO)
-    datos["topes"] = dict(POR_DEFECTO["topes"])
-    globales = Path(ruta_global) if ruta_global else ruta_global_por_defecto()
-    for ruta in (globales, Path(raiz) / ".claude" / "baton.json"):
-        crudo = _leer(ruta, avisos)
-        if crudo:
-            datos = _fusionar(datos, crudo, ruta, avisos)
-    return Config(datos, avisos)
+    warnings: list = []
+    data = dict(DEFAULTS)
+    data["limits"] = dict(DEFAULTS["limits"])
+    globals_ = Path(global_path) if global_path else default_global_path()
+    for path in (globals_, Path(root) / ".claude" / "baton.json"):
+        raw = _read(path, warnings)
+        if raw:
+            data = _merge(data, raw, path, warnings)
+    return Config(data, warnings)

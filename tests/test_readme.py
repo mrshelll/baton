@@ -1,46 +1,60 @@
-"""El README es la cara del proyecto: sus diagramas tienen que estar bien formados.
+"""The README is the project's face: its diagrams have to be well formed.
 
-Comprobacion ligera y sin dependencias. La validacion de verdad, contra el parser
-de Mermaid, esta en tools/validar-mermaid.mjs.
+A light, dependency-free check. The real validation, against the Mermaid parser
+itself, lives in tools/validate-mermaid.mjs.
 """
 import re
 import unittest
 
-from tests.ayudas import RAIZ_REPO
+from tests.helpers import REPO_ROOT
 
-# Tipos que GitHub renderiza. Si anades uno nuevo, validalo antes con
-# tools/validar-mermaid.mjs.
-TIPOS = ("flowchart", "graph", "sequenceDiagram", "classDiagram", "stateDiagram",
+# Types GitHub renders. If you add a new one, validate it first with
+# tools/validate-mermaid.mjs.
+TYPES = ("flowchart", "graph", "sequenceDiagram", "classDiagram", "stateDiagram",
          "erDiagram", "journey", "gantt", "pie", "gitGraph", "mindmap", "timeline",
          "xychart-beta", "block-beta", "quadrantChart", "sankey-beta")
 
+FILES = ("README.md", "README.es.md")
+
 
 class TestReadme(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.texto = (RAIZ_REPO / "README.md").read_text(encoding="utf-8")
-        cls.bloques = re.findall(r"```mermaid\n(.*?)```", cls.texto, re.DOTALL)
+    def each(self):
+        for name in FILES:
+            text = (REPO_ROOT / name).read_text(encoding="utf-8")
+            yield name, text, re.findall(r"```mermaid\n(.*?)```", text, re.DOTALL)
 
-    def test_hay_diagramas(self):
-        self.assertGreaterEqual(len(self.bloques), 4)
+    def test_both_readmes_have_diagrams(self):
+        for name, _, blocks in self.each():
+            with self.subTest(file=name):
+                self.assertGreaterEqual(len(blocks), 4)
 
-    def test_todos_los_bloques_cierran(self):
-        self.assertEqual(self.texto.count("```mermaid"), len(self.bloques),
-                         "hay un bloque mermaid sin cerrar")
+    def test_every_block_closes(self):
+        for name, text, blocks in self.each():
+            with self.subTest(file=name):
+                self.assertEqual(text.count("```mermaid"), len(blocks),
+                                 "an unclosed mermaid block")
 
-    def test_cada_diagrama_declara_un_tipo_conocido(self):
-        for i, bloque in enumerate(self.bloques, 1):
-            with self.subTest(diagrama=i):
-                primera = bloque.strip().split("\n")[0].strip()
-                self.assertTrue(primera.startswith(TIPOS),
-                                f"tipo desconocido: {primera!r}")
+    def test_every_diagram_declares_a_known_type(self):
+        for name, _, blocks in self.each():
+            for i, block in enumerate(blocks, 1):
+                with self.subTest(file=name, diagram=i):
+                    first = block.strip().split("\n")[0].strip()
+                    self.assertTrue(first.startswith(TYPES), f"unknown type: {first!r}")
 
-    def test_los_bloques_de_codigo_estan_balanceados(self):
-        self.assertEqual(self.texto.count("```") % 2, 0, "hay una valla ``` sin pareja")
+    def test_code_fences_are_balanced(self):
+        for name, text, _ in self.each():
+            with self.subTest(file=name):
+                self.assertEqual(text.count("```") % 2, 0, "an unpaired ``` fence")
 
-    def test_menciona_el_reinicio_tras_instalar(self):
-        # Es el error numero uno; si desaparece del README, vuelve a pasar.
-        self.assertIn("Reinicia Claude Code", self.texto)
+    def test_both_mention_the_restart_after_installing(self):
+        # It is the number one failure; if it leaves the README, it happens again.
+        for name, text, _ in self.each():
+            with self.subTest(file=name):
+                self.assertTrue("Restart Claude Code" in text or "Reinicia Claude Code" in text)
+
+    def test_the_two_readmes_link_to_each_other(self):
+        self.assertIn("README.es.md", (REPO_ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("README.md", (REPO_ROOT / "README.es.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

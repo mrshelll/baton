@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Despachador unico de los hooks de baton.
+"""Single dispatcher for baton's hooks.
 
-Contrato inviolable, y la razon por la que este fichero existe en vez de tres:
-**este proceso SIEMPRE sale con codigo 0**. Un traspaso corrupto, un stdin que
-no es JSON o un disco lleno no pueden impedir que arranque una sesion de Claude
-Code. Toda la logica va dentro de un `except BaseException` que degrada a un
-mensaje legible.
+Inviolable contract, and the reason this file exists instead of three: **this
+process ALWAYS exits 0**. A corrupt handoff, a stdin that is not JSON or a full
+disk cannot stop a Claude Code session from starting. All the logic sits inside
+an `except BaseException` that degrades to a readable message.
 
-El evento llega como argv[1] (`session-start`, `post-compact`, `stop`) porque
-hooks.json usa la forma `command: python3` + `args: [...]`, que no pasa por el
-shell y por tanto es inmune a rutas con espacios.
+The event arrives as argv[1] (`session-start`, `post-compact`, `stop`) because
+hooks.json uses the `command: python3` + `args: [...]` form, which never goes
+through a shell and is therefore immune to paths with spaces.
 """
 from __future__ import annotations
 
@@ -20,152 +19,134 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import almacen, config, documento, gitinfo, salida  # noqa: E402
+from lib import config, document, gitinfo, output, storage  # noqa: E402
 
 
-def _leer_entrada() -> dict:
-    """Lee el payload de stdin. Cualquier basura se convierte en {}."""
+def _read_input() -> dict:
+    """Read the payload from stdin. Any garbage becomes {}."""
     try:
-        crudo = sys.stdin.read()
+        raw = sys.stdin.read()
     except Exception:
         return {}
-    if not crudo or not crudo.strip():
+    if not raw or not raw.strip():
         return {}
     try:
-        datos = json.loads(crudo)
+        data = json.loads(raw)
     except Exception:
         return {}
-    return datos if isinstance(datos, dict) else {}
+    return data if isinstance(data, dict) else {}
 
 
-def _emitir(carga: dict) -> None:
-    """Escribe el JSON de salida. Un dict vacio significa silencio."""
-    if not carga:
+def _emit(payload: dict) -> None:
+    """Write the output JSON. An empty dict means silence."""
+    if not payload:
         return
     try:
-        sys.stdout.write(json.dumps(carga, ensure_ascii=False))
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False))
     except Exception:
         pass
 
 
-def _aviso(texto: str) -> dict:
-    """Un problema de baton se cuenta, no se esconde -- pero nunca bloquea."""
-    return {"systemMessage": f"baton: {texto}"}
+# --- handlers -------------------------------------------------------------
+# Each one receives an already-enabled project and returns
+# (output_payload, result_for_the_log).
 
+def _session_start(entry: dict, paths: storage.Paths, cfg) -> tuple[dict, str]:
+    """Inject the handoff when the session starts."""
+    source = entry.get("source") or "startup"
+    if source not in cfg["inject_on"]:
+        return {}, f"silent: '{source}' is not in inject_on"
 
-def _raiz(entrada: dict) -> Path:
-    """La raiz del proyecto sale del `cwd` del payload.
+    text = paths.document.read_text(encoding="utf-8", errors="replace")
+    mode = document.read_mode(text)
+    fields = document.read_fields(text)
+    strings = output.load_strings(cfg["language"])
 
-    Nunca de os.getcwd(): el directorio de trabajo de un hook no es de fiar.
-    """
-    cwd = entrada.get("cwd") or os.getcwd()
-    return almacen.raiz_proyecto(cwd)
+    notice = gitinfo.freshness(paths.root, fields.get("date"), fields.get("branch", ""),
+                               fields.get("commit", ""), strings).notice()
 
-
-# --- manejadores ---------------------------------------------------------
-# Todos reciben (entrada, rutas, cfg) y devuelven
-# (carga_de_salida, resultado_para_la_bitacora). `main` solo los llama con el
-# proyecto ya activado, asi que ninguno tiene que comprobarlo.
-
-def _session_start(entrada: dict, rutas: almacen.Rutas, cfg: dict) -> tuple[dict, str]:
-    """Inyecta el traspaso al arrancar la sesion."""
-    origen = entrada.get("source") or "startup"
-    if origen not in cfg["inyectar_en"]:
-        return {}, f"silencio: '{origen}' no esta en inyectar_en"
-
-    texto = rutas.documento.read_text(encoding="utf-8", errors="replace")
-    modo = documento.leer_modo(texto)
-    campos = documento.leer_campos(texto)
-    textos = salida.cargar_textos()
-
-    aviso = gitinfo.frescura(rutas.raiz, campos.get("fecha"),
-                             campos.get("rama", ""), campos.get("commit", "")).aviso()
-
-    # Una compactacion no es una sesion nueva: si contara, el aviso de "esto ya
-    # te lo entregue" saltaria por algo que el usuario no hizo.
-    repetido = almacen.registrar_entrega(
-        rutas, documento.huella(texto, textos["seccion_contexto"]),
-        cuenta=(origen != "compact"),
+    # A compaction is not a new session: counting it would fire the "I already
+    # gave you this" notice for something the user never did.
+    repeat = storage.record_delivery(
+        paths, document.fingerprint(text, strings["context_section"]),
+        count=(source != "compact"),
     )
 
-    contexto = salida.envolver(
-        documento=documento.extraer_cuerpo(texto, textos["seccion_contexto"]) or texto,
-        modo=modo, escrito=campos.get("fecha", "?"),
-        origen=str(rutas.documento.relative_to(rutas.raiz)),
-        aviso_frescura=aviso, repetido=repetido, textos=textos,
+    context = output.wrap(
+        body=document.extract_body(text, strings["context_section"]) or text,
+        mode=mode, written=fields.get("date", "?"),
+        source=str(paths.document.relative_to(paths.root)),
+        freshness_notice=notice, repeat=repeat, strings=strings,
     )
 
-    carga = {"hookSpecificOutput": {"hookEventName": "SessionStart",
-                                    "additionalContext": contexto}}
-    if cfg["recibo"]:
-        # El recibo es lo mas barato que convierte un fallo silencioso en uno
-        # visible: si no aparece esta linea, el hook no disparo.
-        n = len(contexto.split("\n"))
-        carga["systemMessage"] = (
-            f"baton: traspaso inyectado -- modo {modo}, {n} lineas"
-            + (", con aviso de frescura" if aviso else "")
+    payload = {"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                      "additionalContext": context}}
+    if cfg["receipt"]:
+        # The receipt is the cheapest way to turn a silent failure into a
+        # visible one: if this line is missing, the hook did not fire.
+        payload["systemMessage"] = (
+            f"baton: handoff injected -- {mode} mode, {len(context.splitlines())} lines"
+            + (", with a freshness notice" if notice else "")
         )
-    return carga, f"inyectado modo {modo}"
+    return payload, f"injected {mode} mode"
 
 
-def _post_compact(entrada: dict, rutas: almacen.Rutas, cfg: dict) -> tuple[dict, str]:
-    """Guarda el resumen de la compactacion y arma la bandera. Nada mas.
+def _post_compact(entry: dict, paths: storage.Paths, cfg) -> tuple[dict, str]:
+    """Save the compaction summary and arm the flag. Nothing else.
 
-    Aqui no se puede redactar: en la compactacion no hay turno de modelo, y el
-    propio binario lo dice al rechazar los hooks de tipo `prompt` -- "no
-    conversation context is available". Lo que si hay es `compact_summary`, el
-    resumen que el harness acaba de producir. Se guarda como INSUMO para que el
-    siguiente Stop pida un traspaso redactado de verdad.
+    Nothing can be drafted here: a compaction has no model turn, and the binary
+    itself says so when it rejects `prompt`-type hooks -- "no conversation
+    context is available". What it does have is `compact_summary`, the summary
+    the harness just produced. It is kept as INPUT so the next Stop can ask for
+    a properly written handoff.
 
-    Y no toca el traspaso. Jamas: un resumen que nadie redacto no puede pisar
-    uno escrito con criterio.
+    And it does not touch the handoff. Ever: a summary nobody wrote must not
+    overwrite one written with judgement.
     """
-    resumen = entrada.get("compact_summary") or ""
-    almacen.guardar_resumen(rutas, resumen, trigger=entrada.get("trigger") or "auto")
-    almacen.armar_pendiente(rutas, entrada.get("session_id") or "")
-    return {}, "resumen guardado y traspaso pendiente"
+    storage.save_summary(paths, entry.get("compact_summary") or "",
+                         trigger=entry.get("trigger") or "auto")
+    storage.arm_pending(paths, entry.get("session_id") or "")
+    return {}, "summary saved, handoff pending"
 
 
-def _stop(entrada: dict, rutas: almacen.Rutas, cfg: dict) -> tuple[dict, str]:
-    """Pide el traspaso, pero solo en el momento correcto.
+def _stop(entry: dict, paths: storage.Paths, cfg) -> tuple[dict, str]:
+    """Ask for the handoff, but only at the right moment.
 
-    Ese momento es justo despues de una compactacion: el contexto se acaba de
-    vaciar, asi que redactar es lo mas barato de toda la sesion. Hacerlo antes,
-    al 70-80 % de la ventana, saldria caro y ademas la propia redaccion podria
-    disparar la compactacion que se intentaba anticipar.
+    That moment is right after a compaction: the context has just been emptied,
+    so drafting is the cheapest it will ever be in the session. Doing it before,
+    at 70-80% of the window, would be expensive and the drafting itself could
+    trigger the very compaction it was trying to pre-empt.
 
-    Cuatro puertas antes de interrumpir a nadie: proyecto activado (esa la
-    mira `main`), `stop_hook_active` falso (anti-bucle del harness), bandera
-    armada y cooldown.
+    Three gates before interrupting anyone: `stop_hook_active` false (the
+    harness's own loop guard), an armed flag, and the cooldown.
     """
-    if entrada.get("stop_hook_active"):
-        return {}, "silencio: ya estamos dentro de un Stop bloqueado"
+    if entry.get("stop_hook_active"):
+        return {}, "silent: already inside a blocked Stop"
+    if not storage.has_pending(paths, cfg["cooldown_minutes"]):
+        return {}, "silent: nothing pending"
 
-    if not almacen.hay_pendiente(rutas, cfg["cooldown_minutos"]):
-        return {}, "silencio: nada pendiente"
-
-    # Se consume ANTES de pedirlo: si algo falla despues, como mucho se pierde
-    # una peticion. Al reves se pediria en bucle, que es mucho peor.
-    almacen.consumir_pendiente(rutas)
+    # Consumed BEFORE asking: if something fails afterwards, at worst one
+    # request is lost. The other way round it would ask in a loop, which is far
+    # worse.
+    storage.consume_pending(paths)
 
     return ({
         "decision": "block",
         "reason": (
-            "baton: esta sesion acaba de compactarse, asi que el resumen de la "
-            "compactacion sigue fresco en tu contexto y es el mejor momento para "
-            "dejar el traspaso al dia.\n\n"
-            "Escribe ahora el traspaso siguiendo la skill `baton`: pide el contexto "
-            "con `baton.py contexto`, redacta SOLO el cuerpo en el borrador y "
-            "escribelo con `baton.py escribir --modo <memoria|continuacion>`. "
-            "Destila el resumen, no lo copies: hay un presupuesto y se valida.\n\n"
-            "Cuando termines, retoma lo que estabas haciendo o sigue esperando al "
-            "usuario, segun corresponda. baton no volvera a pedirtelo por esta "
-            "compactacion."
+            "baton: this session has just been compacted, so the compaction summary is "
+            "still fresh in your context and this is the best moment to bring the "
+            "handoff up to date.\n\n"
+            "Write the handoff now following the `baton` skill: ask for the context with "
+            "`baton.py context`, draft ONLY the body into the draft file, and write it "
+            "with `baton.py write --mode <memory|continue>`. Distil the summary, do not "
+            "copy it: there is a budget and it is enforced.\n\n"
+            "When you are done, resume what you were doing or keep waiting for the user, "
+            "whichever applies. baton will not ask again for this compaction."
         ),
-    }, "traspaso pedido tras compactacion")
+    }, "handoff requested after compaction")
 
 
-MANEJADORES = {
+HANDLERS = {
     "session-start": _session_start,
     "post-compact": _post_compact,
     "stop": _stop,
@@ -173,38 +154,43 @@ MANEJADORES = {
 
 
 def main() -> int:
-    evento = sys.argv[1] if len(sys.argv) > 1 else ""
-    entrada = _leer_entrada()
-    rutas = None
+    event = sys.argv[1] if len(sys.argv) > 1 else ""
+    entry = _read_input()
+    paths = None
     try:
-        manejador = MANEJADORES.get(evento)
-        if manejador is None:
-            # Un evento que no conocemos no es un error nuestro: callamos.
+        handler = HANDLERS.get(event)
+        if handler is None:
+            # An event we do not know is not our error: stay quiet.
             return 0
-        # Las rutas se calculan antes de la config para que la bitacora sea
-        # localizable pase lo que pase; luego se rehacen porque el documento
-        # puede estar configurado en otro sitio (la bitacora no se mueve).
-        rutas = almacen.Rutas(_raiz(entrada))
-        cfg = config.cargar(rutas.raiz)
-        rutas = almacen.Rutas(rutas.raiz, documento_rel=cfg["documento"])
-        if rutas.documento.is_file():
-            carga, resultado = manejador(entrada, rutas, cfg)
-        else:
-            # Sin documento los tres eventos callan igual: es el caso
-            # mayoritario del mundo -todo proyecto donde nunca se uso /baton- y
-            # no puede ser ruido.
-            carga, resultado = {}, "silencio: proyecto sin activar"
-        _emitir(carga)
-        almacen.anotar(rutas, evento=evento, resultado=resultado,
-                       source=entrada.get("source") or entrada.get("trigger") or "")
-    except BaseException as exc:  # noqa: BLE001 - degradar es el requisito
-        _emitir(_aviso(
-            f"no pude completar '{evento}' ({type(exc).__name__}: {exc}). "
-            "La sesion sigue con normalidad."
-        ))
-        if rutas is not None:
-            almacen.anotar(rutas, evento=evento, resultado="error",
-                           error=f"{type(exc).__name__}: {exc}")
+
+        # Never from os.getcwd(): a hook's working directory is not reliable.
+        # Never from CLAUDE_SESSION_ID either: it is not guaranteed.
+        root = storage.project_root(entry.get("cwd") or os.getcwd())
+
+        # Resolved before the config on purpose, so the log still gets written
+        # if `config.load` blows up on a corrupt file.
+        paths = storage.Paths(root)
+        cfg = config.load(root)
+        paths = storage.Paths(root, document_rel=cfg["document"])
+
+        if not paths.document.is_file():
+            # The majority case in the world: every project where /baton was
+            # never used. It cannot be noise.
+            storage.log_event(paths, event=event, result="silent: project not enabled")
+            return 0
+
+        payload, result = handler(entry, paths, cfg)
+        _emit(payload)
+        storage.log_event(paths, event=event, result=result,
+                          source=entry.get("source") or entry.get("trigger") or "")
+    except BaseException as exc:  # noqa: BLE001 - degrading is the requirement
+        _emit({"systemMessage": (
+            f"baton: could not complete '{event}' ({type(exc).__name__}: {exc}). "
+            "The session continues normally."
+        )})
+        if paths is not None:
+            storage.log_event(paths, event=event, result="error",
+                              error=f"{type(exc).__name__}: {exc}")
     return 0
 
 

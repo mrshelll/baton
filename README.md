@@ -1,152 +1,154 @@
 # baton
 
-**Traspaso de contexto entre sesiones de Claude Code con un documento que no crece.**
+**Context handoff between Claude Code sessions, with a document that doesn't grow.**
 
-[![tests](https://img.shields.io/badge/tests-187-brightgreen)](tests/)
-[![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
-[![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
+***English** · [Español](README.es.md)*
+
+[![tests](https://img.shields.io/badge/tests-200-brightgreen)](tests/)
+[![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
+[![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
 ---
 
-## El problema
+## The problem
 
-Cuando una sesión de Claude Code se alarga, la calidad se degrada y toca abrir una
-nueva. El traspaso es manual, y los plugins que lo automatizan comparten un fallo
-medido: **el documento crece sin límite**.
+When a Claude Code session runs long, quality degrades and you need to start a
+fresh one. The handoff is manual, and the plugins that automate it share one
+measured flaw: **the document grows without bound**.
 
 ```mermaid
 xychart-beta
-    title "Tokens que paga cada sesión nueva solo por arrancar"
-    x-axis "Traspasos acumulados" [1, 10, 20, 30, 40]
-    y-axis "Tokens del documento" 0 --> 16000
-    line "Un documento que acumula" [420, 3600, 7100, 10600, 14200]
-    line "baton (tope duro)" [1700, 1700, 1700, 1700, 1700]
+    title "Tokens every new session pays just to start"
+    x-axis "Handoffs accumulated" [1, 10, 20, 30, 40]
+    y-axis "Tokens in the document" 0 --> 16000
+    line "A document that accumulates" [420, 3600, 7100, 10600, 14200]
+    line "baton (hard cap)" [1700, 1700, 1700, 1700, 1700]
 ```
 
-La línea de arriba es un caso real: **931 líneas ≈ 14.200 tokens**. El documento
-que existía para *ahorrar* contexto acabó siendo el mayor consumidor de contexto
-del arranque.
+The upper line is a real case: **931 lines ≈ 14,200 tokens**. The document that
+existed to *save* context became the single largest consumer of context at
+startup.
 
-Y hay algo peor, verificado en el binario de Claude Code 2.1.259: el contexto que
-un hook inyecta **se trunca a 8.000 caracteres o 200 líneas, y en silencio**.
+And it gets worse. Verified against the Claude Code 2.1.259 binary, the context a
+hook injects is **truncated at 8,000 characters or 200 lines, silently**.
 
 ```mermaid
 block-beta
   columns 5
-  A["Documento<br/>14.200 tokens"] space B["Techo del harness<br/>8.000 caracteres"] space C["Lo que llega<br/>al modelo"]
+  A["Document<br/>14,200 tokens"] space B["Harness ceiling<br/>8,000 characters"] space C["What reaches<br/>the model"]
   A --> B
   B --> C
 ```
 
-Un traspaso así **no cabe**. Llega cortado por la mitad y nadie avisa: el modelo lee
-media frase y la trata como si estuviera entera.
+A handoff that size **does not fit**. It arrives cut in half and nobody says so:
+the model reads half a sentence and treats it as whole.
 
-## Cómo lo resuelve baton
+## How baton solves it
 
 ```mermaid
 flowchart LR
-    subgraph esc["Al escribir"]
-        M["El modelo redacta<br/>solo el cuerpo"] --> V{"¿Cabe en<br/>el presupuesto?"}
-        V -- "no" --> R["Falla y dice<br/>qué sección sobra"]
+    subgraph w["When writing"]
+        M["The model drafts<br/>the body only"] --> V{"Fits the<br/>budget?"}
+        V -- "no" --> R["Fails and names<br/>the section to cut"]
         R -.-> M
-        V -- "sí" --> C["El código compone<br/>y escribe entero"]
+        V -- "yes" --> C["The code composes<br/>and writes it whole"]
     end
-    subgraph iny["Al arrancar la sesión siguiente"]
+    subgraph i["When the next session starts"]
         C --> S["SessionStart"]
-        S --> I["Instrucción de modo<br/>+ aviso de frescura<br/>+ documento saneado"]
+        S --> I["Mode instruction<br/>+ freshness notice<br/>+ sanitized document"]
     end
     style R fill:#ffe6e6,stroke:#c00
     style C fill:#e6ffe6,stroke:#0a0
 ```
 
-- **Se reescribe entero, nunca se añade.** Un fichero, sin entradas apiladas.
-- **Presupuesto duro verificado por código**: 120 líneas / 6.000 caracteres,
-  derivados hacia atrás desde el techo real del harness. Si no cabe, el comando
-  **falla y obliga a recortar** — no trunca a media frase, porque un traspaso
-  cortado miente.
-- **Secciones opcionales de verdad.** Si no hay bloqueos, la sección *no existe*.
-  Nada de «Bloqueos: ninguno»: los huecos son por donde engordan los demás.
-- **Los datos de git los pone el código**, no el modelo: rama, commit, ficheros sin
-  commitear, fecha. Exactos y sin gastar presupuesto.
+- **Rewritten whole, never appended to.** One file, no stacked entries.
+- **A hard budget enforced by code**: 120 lines / 6,000 characters, derived
+  backwards from the harness's real ceiling. If it doesn't fit, the command
+  **fails and forces a trim** — it never cuts mid-sentence, because a truncated
+  handoff lies.
+- **Genuinely optional sections.** No blockers? The section *doesn't exist*. No
+  "Blockers: none": empty sections are where the others put on weight.
+- **Git facts come from the code**, not the model: branch, commit, uncommitted
+  files, date. Exact, and free of budget.
 
-## Los dos modos
+## The two modes
 
-Este es el diferenciador, y ningún plugin equivalente lo tiene: los demás asumen
-que siempre hay trabajo a medias, así que la sesión nueva arranca sola y toca lo
-que nadie pidió.
+This is the differentiator, and no equivalent plugin has it: the others assume
+there is always unfinished work, so the new session starts on its own and touches
+what nobody asked for.
 
 ```mermaid
 flowchart TD
-    Q{"¿Hay una tarea<br/>empezada sin terminar?"}
-    Q -- "sí, y puedo nombrar<br/>el siguiente paso" --> CONT["modo continuacion"]
-    Q -- "no, o tengo dudas" --> MEM["modo memoria"]
-    CONT --> CA["La sesión nueva<br/>retoma y empieza"]
-    MEM --> MA["La sesión nueva<br/>NO inicia trabajo:<br/>espera instrucciones"]
+    Q{"Is there a task<br/>started and unfinished?"}
+    Q -- "yes, and I can name<br/>the next step" --> CONT["continue mode"]
+    Q -- "no, or I'm unsure" --> MEM["memory mode"]
+    CONT --> CA["The new session<br/>resumes and starts"]
+    MEM --> MA["The new session<br/>does NOT start work:<br/>it waits for you"]
     style CONT fill:#e8f0fe,stroke:#1a73e8
     style MEM fill:#fef7e0,stroke:#f9ab00
 ```
 
-| | `continuacion` | `memoria` |
+| | `continue` | `memory` |
 |---|---|---|
-| Cuándo | Hay tarea a medias | Hay progreso, nada que continuar |
-| Exige `Siguiente paso` | Sí, el código lo verifica | No |
-| La sesión nueva | Confirma y empieza | Saluda y **espera** |
+| When | A task is half done | Progress made, nothing to continue |
+| Requires `Next step` | Yes, the code enforces it | No |
+| The new session | Confirms and starts | Greets and **waits** |
 
-Ante cualquier ambigüedad —frontmatter roto, documento corrupto, versión
-desconocida— baton cae a `memoria`. Un documento ilegible nunca puede autorizar a
-continuar trabajo.
+On any ambiguity — broken frontmatter, corrupt document, unknown version — baton
+falls back to `memory`. An unreadable document can never authorise continuing
+work.
 
-## El ciclo automático
+## The automatic cycle
 
-Cuando el harness compacta solo, tú no estás pensando en traspasar. baton sí.
+When the harness compacts on its own, you aren't thinking about handoffs. baton is.
 
 ```mermaid
 sequenceDiagram
-    participant U as Tú
+    participant U as You
     participant CC as Claude Code
     participant B as baton
-    participant D as .baton/TRASPASO.md
+    participant D as .baton/HANDOFF.md
 
-    U->>CC: trabajas hasta llenar la ventana
-    CC->>CC: compacta (auto)
-    CC->>B: PostCompact (trae compact_summary)
-    B->>B: guarda el resumen, arma la bandera
-    Note over B,D: no toca el traspaso: un resumen<br/>que nadie redactó no pisa uno escrito
-    U->>CC: sigues trabajando
-    CC->>B: Stop (fin del turno)
-    B-->>CC: "escribe el traspaso ahora"
-    Note over CC: el contexto acaba de vaciarse:<br/>es el momento más barato de la sesión
-    CC->>D: traspaso redactado y validado
-    U->>CC: abres sesión nueva
+    U->>CC: work until the window fills
+    CC->>CC: compacts (auto)
+    CC->>B: PostCompact (carries compact_summary)
+    B->>B: saves the summary, arms the flag
+    Note over B,D: never touches the handoff: a summary<br/>nobody wrote must not overwrite one that was
+    U->>CC: you keep working
+    CC->>B: Stop (end of turn)
+    B-->>CC: "write the handoff now"
+    Note over CC: the context has just been emptied:<br/>the cheapest moment in the session
+    CC->>D: handoff drafted and validated
+    U->>CC: you open a new session
     CC->>B: SessionStart
-    B-->>CC: additionalContext con modo y frescura
+    B-->>CC: additionalContext with mode and freshness
 ```
 
-**Por qué después de compactar y no antes.** Antes estás al 70-80 % de la ventana:
-redactar ahí es caro y la propia redacción puede disparar la compactación que
-intentabas anticipar. Después, el contexto está recién vaciado.
+**Why after compacting and not before.** Before, you are at 70-80% of the window:
+drafting there is expensive and the drafting itself can trigger the very
+compaction you were trying to pre-empt. After, the context is freshly emptied.
 
-`PreCompact` no sirve para esto: en la compactación no hay turno de modelo. El
-propio binario lo dice al rechazar los hooks que requieren conversación —
-*"no conversation context is available"*.
+`PreCompact` cannot do this: a compaction has no model turn. The binary itself
+says so when it rejects hooks that need a conversation — *"no conversation
+context is available"*.
 
-**Como mucho una interrupción por compactación**, con anti-bucle nativo
-(`stop_hook_active`) y un cooldown de 30 minutos configurable.
+**At most one interruption per compaction**, with the harness's native loop guard
+(`stop_hook_active`) and a configurable 30-minute cooldown.
 
-## Frescura: avisar, nunca caducar
+## Freshness: flag it, never expire it
 
-Un traspaso de hace días con commits encima miente. Al inyectarlo, baton compara
-con git y lo dice:
+A handoff from days ago with commits on top lies. On injection, baton compares
+against git and says so:
 
-> `[baton] Aviso de frescura: este traspaso se escribió hace 6 días, en la rama`
-> `feature/cupones, y ahora estás en main. Desde entonces hay 14 commits nuevos y`
-> `9 ficheros cambiados. Da por incierto lo que diga del estado del código.`
+> `[baton] Freshness notice: this handoff was written 6 days ago, on branch`
+> `feature/coupons, and you are now on main. Since then there are 14 new commits`
+> `and 9 changed files. Treat anything it says about the code as uncertain.`
 
-También detecta que el commit desapareció (rebase o squash). **Nunca caduca**: un
-proyecto parado dos semanas no invalida su traspaso, solo hay que saber que es
-viejo. Y si no hay nada que decir, no gasta ni una línea.
+It also detects that the commit is gone (rebase or squash). **It never expires**:
+a project idle for two weeks doesn't invalidate its handoff, you just need to
+know it is old. And when there is nothing to say, it spends no lines.
 
-## Instalación
+## Install
 
 ```bash
 claude plugin marketplace add mrshelll/baton
@@ -154,179 +156,191 @@ claude plugin install baton@baton
 ```
 
 > [!IMPORTANT]
-> **Reinicia Claude Code después de instalar.** Los hooks se cargan al arrancar:
-> sin reinicio no disparan, y un hook que no dispara no da error — no da nada.
-> Es el error número uno.
+> **Restart Claude Code after installing.** Hooks are loaded at startup: without
+> a restart they never fire, and a hook that doesn't fire gives no error — it
+> gives nothing. This is the number one failure.
 
-Comprueba que quedó bien:
+Check it landed:
 
 ```bash
-/hooks                                    # baton en SessionStart, PostCompact y Stop
+/hooks                                    # baton on SessionStart, PostCompact and Stop
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor
 ```
 
-## Uso
+## Use
 
 ```bash
-/baton                    # baton elige el modo
-/baton memoria            # fuerzas "solo ten esto presente"
-/baton continuacion       # fuerzas "sigue por aquí"
+/baton                    # baton picks the mode
+/baton memory             # force "just keep this in mind"
+/baton continue           # force "carry on with this"
 ```
 
-Y para inspeccionar:
+And to inspect:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" ver        # resumen y coste
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor     # por qué no funciona
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" show      # summary and cost
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor    # why it isn't working
 ```
 
-## Cómo se ve un traspaso
+## What a handoff looks like
 
 ```markdown
 ---
 baton: 1
-modo: continuacion
-fecha: 2026-09-03T00:54:51-05:00
-rama: feature/cupones
+mode: continue
+date: 2026-09-03T00:54:51-05:00
+branch: feature/coupons
 commit: a3f9c21
 ---
-<!-- Generado por baton. Se REESCRIBE ENTERO en cada /baton. -->
+<!-- Generated by baton. REWRITTEN IN FULL on every /baton. -->
 
-## Contexto
-- rama `feature/cupones`, 3 sin commitear: src/pagos.ts, src/cupon.ts, tests/pagos.test.ts
-- ultimo commit `a3f9c21` feat: valida el cupón antes de cobrar (2026-09-02)
+## Context
+- branch `feature/coupons`, 3 uncommitted: src/pay.ts, src/coupon.ts, tests/pay.test.ts
+- last commit `a3f9c21` feat: validate the coupon before charging (2026-09-02)
 
-## Estado
-Migrando el cobro de Stripe Charges a PaymentIntents. `src/pagos.ts` ya usa
-PaymentIntents en el camino feliz y sus 4 tests pasan. Falta reembolso y webhook.
+## State
+Migrating charging from Stripe Charges to PaymentIntents. `src/pay.ts` already uses
+PaymentIntents on the happy path and its 4 tests pass. Refund and webhook are left.
 
-## Decisiones y su porque
-- Idempotency key = `pedido_id`, no UUID nuevo — un reintento no puede cobrar dos veces.
-- El cupón se valida antes de crear el PaymentIntent — si no, quedan intentos huérfanos.
+## Decisions and why
+- Idempotency key = `order_id`, not a fresh UUID — a client retry must not charge twice.
+- The coupon is validated before creating the PaymentIntent — otherwise orphan intents pile up.
 
-## Siguiente paso
-Implementar `reembolsar(pedido_id)` en `src/pagos.ts:214` con la misma idempotency key.
+## Next step
+Implement `refund(order_id)` in `src/pay.ts:214` using the same idempotency key.
 
-## Trampas
-- `paymentIntents.confirm` devuelve 200 con `status: "requires_action"`. No es éxito.
+## Traps
+- `paymentIntents.confirm` returns 200 with `status: "requires_action"`. That is not success.
 ```
 
-**22 líneas de 120.** El frontmatter y `## Contexto` los pone el código; el modelo
-solo escribe de `## Estado` hacia abajo.
+**22 lines out of 120.** The code writes the frontmatter and `## Context`; the
+model only writes from `## State` down.
 
-## Dónde vive todo
+## Where everything lives
 
 ```mermaid
 flowchart TB
     subgraph home["~/.claude/"]
-        P["plugins/baton/<br/><i>el código, una sola vez</i>"]
-        G["baton.json<br/><i>tu config por defecto</i>"]
+        P["plugins/baton/<br/><i>the code, once</i>"]
+        G["baton.json<br/><i>your default config</i>"]
     end
-    subgraph proy["&lt;tu proyecto&gt;/"]
-        T[".baton/TRASPASO.md<br/><b>se commitea</b>"]
-        L[".baton/local/<br/><i>histórico, borradores, registros</i><br/>una línea de .gitignore"]
-        CP[".claude/baton.json<br/><i>config solo de este repo</i>"]
+    subgraph proj["&lt;your project&gt;/"]
+        T[".baton/HANDOFF.md<br/><b>committed</b>"]
+        L[".baton/local/<br/><i>history, drafts, registers</i><br/>one .gitignore line"]
+        CP[".claude/baton.json<br/><i>config for this repo only</i>"]
     end
-    P -.->|"lee y escribe<br/>donde estés"| proy
-    G -.->|"la del proyecto manda"| CP
+    P -.->|"reads and writes<br/>wherever you are"| proj
+    G -.->|"the project one wins"| CP
     style T fill:#e6ffe6,stroke:#0a0
     style L fill:#f5f5f5,stroke:#999
 ```
 
-Añade **una sola línea** a tu `.gitignore`:
+Add **one line** to your `.gitignore`:
 
 ```gitignore
 .baton/local/
 ```
 
-**Instalas una vez, a nivel de usuario, y funciona en todos tus proyectos.** baton
-no lleva un registro de proyectos: cada hook recibe el directorio de la sesión y
-trabaja ahí. En un proyecto donde nunca corriste `/baton`, el plugin está instalado
-pero **inerte**: no crea ficheros ni escribe nada. El primer `/baton` lo activa.
+**Install once, at user level, and it works across every project.** baton keeps no
+registry of projects: each hook receives the session's directory and works there.
+In a project where you never ran `/baton`, the plugin is installed but **inert**:
+it creates no files and writes nothing. The first `/baton` enables it.
 
-Y **no necesitas git**. Si el proyecto es un repo, baton aprovecha rama y commits.
-Si no lo es, funciona igual sin esos datos.
+And **you don't need git**. If the project is a repo, baton uses branch and
+commits. If it isn't, it works the same without those facts.
 
-## Configuración
+## Configuration
 
-Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
-`<proyecto>/.claude/baton.json` para un repo concreto (este manda).
+All optional. `~/.claude/baton.json` for your general preference,
+`<project>/.claude/baton.json` for one repo (that one wins).
 
 ```json
 {
-  "topes": { "lineas": 120, "caracteres": 6000, "tokens": 1700 },
-  "documento": ".baton/TRASPASO.md",
-  "historial_max": 10,
-  "inyectar_en": ["startup", "clear", "compact", "resume", "fork"],
-  "cooldown_minutos": 30,
-  "recibo": true
+  "limits": { "lines": 120, "characters": 6000, "tokens": 1700 },
+  "document": ".baton/HANDOFF.md",
+  "history_max": 10,
+  "inject_on": ["startup", "clear", "compact", "resume", "fork"],
+  "cooldown_minutes": 30,
+  "receipt": true,
+  "language": "en"
 }
 ```
 
-| Clave | Por defecto | Qué hace |
+| Key | Default | What it does |
 |---|---|---|
-| `topes.caracteres` | `6000` | **Vinculante**: es lo que mide el harness |
-| `topes.lineas` | `120` | La que un humano ve y sabe arreglar |
-| `topes.tokens` | `1700` | Informativa, no rechaza por sí sola |
-| `documento` | `.baton/TRASPASO.md` | Relativa a la raíz; sin `..` ni absolutas |
-| `historial_max` | `10` | Versiones previas guardadas; `0` desactiva |
-| `inyectar_en` | los cinco | En qué arranques se inyecta |
-| `cooldown_minutos` | `30` | Mínimo entre dos peticiones automáticas |
-| `recibo` | `true` | La línea que prueba que el hook disparó |
+| `limits.characters` | `6000` | **Binding**: the unit the harness truncates by |
+| `limits.lines` | `120` | The one a human sees and can fix |
+| `limits.tokens` | `1700` | Informational, never rejects alone |
+| `document` | `.baton/HANDOFF.md` | Relative to the root; no `..`, no absolutes |
+| `history_max` | `10` | Previous versions kept; `0` disables |
+| `inject_on` | all five | Which session starts get the handoff |
+| `cooldown_minutes` | `30` | Minimum between automatic requests |
+| `receipt` | `true` | The line proving the hook fired |
+| `language` | `en` | Language of everything a human reads |
 
-Un fichero de config roto no impide usar baton: avisa nombrando el fichero y sigue
-con los valores buenos. Si escribes `lineas_max`, te sugiere `topes.lineas`.
+**Config keys stay in English in every language.** They are a machine interface,
+and whoever types them shouldn't need to speak another one. `"language"` changes
+what people read: section headings, messages, and the instructions injected into
+the model. Currently `en` and `es` — adding one is a JSON file in `templates/`.
 
-## Seguridad
+A broken config file never blocks baton: it warns naming the file and carries on
+with the good values. Write `lines_max` and it suggests `limits.lines`.
 
-`.baton/TRASPASO.md` se commitea y viaja con el repo, así que **quien clone un repo
-ajeno se inyecta en su contexto lo que ese fichero diga**. baton lo trata como
-entrada no confiable:
+## Security
 
-- Se eliminan caracteres de control, secuencias ANSI, marcas bidi y espacios de
-  ancho cero.
-- El contenido **no puede cerrar su propia etiqueta** para escaparse del bloque.
-- Va precedido de una advertencia explícita de que es un documento de datos y no
-  instrucciones.
-- El modo se lee **solo** del frontmatter, que escribe el código: un cuerpo que
-  finja otro modo no cambia nada.
+`.baton/HANDOFF.md` is committed and travels with the repo, so **whoever clones
+someone else's repo gets whatever that file says injected into their context**.
+baton treats it as untrusted input:
 
-## Cuando no funciona
+- Control characters, ANSI sequences, bidi marks and zero-width spaces are stripped.
+- The content **cannot close its own tag** to escape the block.
+- It is preceded by an explicit warning that it is a data document, not instructions.
+- The mode is read **only** from the frontmatter, which the code writes: a body
+  faking another mode changes nothing.
 
-Un hook que no dispara no da error: no da nada. Por eso hay cuatro capas:
+## When it doesn't work
 
-1. **El recibo** — una línea al inyectar. Si no la ves, no disparó.
-2. **La bitácora** (`.baton/local/bitacora.jsonl`) — es lo único que distingue *«no
-   disparó»* de *«disparó y calló porque no había documento»*: idénticos desde
-   fuera, con causas opuestas.
-3. **`doctor`** — comprueba hooks, `python3`, `git`, si el plugin está habilitado y
-   si hay actividad reciente. Si no la hay, lista las causas por probabilidad,
-   empezando por «instalaste sin reiniciar».
-4. **El silencio significa una sola cosa**: no hay documento. Cualquier otro
-   problema avisa nombrando el fichero.
+A hook that doesn't fire gives no error: it gives nothing. Hence four layers:
 
-## Requisitos
+1. **The receipt** — one line on injection. No line, no fire.
+2. **The log** (`.baton/local/log.jsonl`) — the only thing telling *"didn't fire"*
+   apart from *"fired and stayed quiet because there was no document"*: identical
+   from outside, opposite causes.
+3. **`doctor`** — checks hooks, `python3`, `git`, whether the plugin is enabled
+   and whether there is recent activity. If there isn't, it lists causes by
+   likelihood, starting with "you installed without restarting".
+4. **Silence means exactly one thing**: there is no document. Every other problem
+   warns naming the file.
 
-Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
+## Requirements
 
-## Desarrollo
+Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
+
+## Development
 
 ```bash
 ./tests/run.sh
 ```
 
-187 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
-de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
-porque es la única forma de cubrir el contrato real. Los proyectos temporales se
-crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.
+200 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
+harness, because that is the only way to cover the real contract. Temporary
+projects are created under a path with a space and an accent, so the awkward case
+is the base case.
 
-## Lo que baton no hará nunca
+To validate the README diagrams against the real Mermaid parser:
 
-Añadir al final del documento en vez de reescribirlo · escribir secciones con
-«ninguno» · caducar un traspaso · abrir la sesión nueva por ti · hooks
-`PostToolUse` o `UserPromptSubmit` · un `Stop` que te interrumpa fuera del momento
-posterior a una compactación · una segunda implementación en bash.
+```bash
+npm install mermaid jsdom && node tools/validate-mermaid.mjs README.md
+```
 
-## Licencia
+## What baton will never do
+
+Append to the document instead of rewriting it · write sections saying "none" ·
+expire a handoff · open the new session for you · `PostToolUse` or
+`UserPromptSubmit` hooks · a `Stop` that interrupts outside the moment right after
+a compaction · a second implementation in bash.
+
+## Licence
 
 MIT

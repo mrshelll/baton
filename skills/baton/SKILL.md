@@ -1,92 +1,95 @@
 ---
 name: baton
-description: Use when the user wants to hand off context to a new Claude Code session - "escribe el traspaso", "/baton", "me estoy quedando sin contexto", "vamos a abrir sesión nueva", "guarda dónde vamos", "cierra esto y seguimos mañana". Writes a size-capped handoff document that the next session receives automatically.
+description: Use when the user wants to hand context off to a new Claude Code session - "write the handoff", "/baton", "I'm running out of context", "let's start a fresh session", "save where we are", "wrap this up, we continue tomorrow". Writes a size-capped handoff document that the next session receives automatically.
 user-invocable: true
 allowed-tools: Bash, Read, Write, Glob, Grep
 ---
 
-# Escribir el traspaso
+# Writing the handoff
 
-Tú redactas **solo el cuerpo**. El fichero final lo compone el código: frontmatter,
-fecha, rama, commit y contexto de git. No escribas nada de eso.
+You draft **the body only**. The code composes the final file: frontmatter, date,
+branch, commit and git context. Do not write any of that.
 
-## 1. Pide el contexto
+## 1. Ask for the context
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" contexto
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" context
 ```
 
-Te dice dónde escribir el borrador, cuál es el presupuesto y qué secciones son
-válidas. Léelo antes de redactar.
+It tells you where to write the draft, what the budget is and which sections are
+valid — in the configured language. Read it before drafting.
 
-## 2. Elige el modo
+## 2. Pick the mode
 
-Si el usuario te dio el modo en los argumentos, úsalo y salta al paso 3.
+If the user gave you the mode in the arguments, use it and skip to step 3.
 
-Elige `continuacion` **solo** si respondes que sí a las tres:
+Choose `continue` **only** if you can answer yes to all three:
 
-1. ¿Hay una tarea concreta, ya empezada, sin terminar?
-2. ¿Puedes nombrar el siguiente paso en una frase imperativa con fichero y línea?
-3. ¿El usuario espera que la retomes **sin preguntarle nada primero**?
+1. Is there a concrete task, already started, unfinished?
+2. Can you name the next step in one imperative sentence with a file and a line?
+3. Does the user expect you to resume it **without asking them anything first**?
 
-Si alguna es «no», o si dudas: `memoria`. Sin excepciones.
+If any answer is no, or if you are unsure: `memory`. No exceptions.
 
-`memoria` no es el modo de consolación, es el correcto casi siempre: el trabajo
-terminó, fue una exploración sin tarea abierta, o el usuario dijo «para aquí».
-Elegir `continuacion` de más es el fallo que hace que la sesión siguiente arranque
-sola y toque trabajo que nadie pidió.
+`memory` is not the consolation prize, it is right almost always: the work
+finished, it was an exploration with no open task, or the user said "stop here".
+Over-choosing `continue` is the failure that makes the next session start on its
+own and touch work nobody asked for.
 
-## 3. Redacta el cuerpo
+## 3. Draft the body
 
-Escribe con `Write` en la ruta de borrador que te dio el paso 1. **Solo el cuerpo**,
-empezando directamente por `## Estado`.
+Use `Write` at the draft path from step 1. **The body only**, starting directly at
+the required section.
 
-Secciones, en este orden. Solo `Estado` es obligatoria:
+Sections, in this order. Only the first is required:
 
-| Sección | Qué va | Qué NO va |
+| Section | What goes in | What does not |
 |---|---|---|
-| `## Estado` | Qué está hecho y qué no, con rutas concretas | Narrar la sesión |
-| `## Decisiones y su porque` | Una línea por decisión: «qué — por qué» | El qué sin el porqué |
-| `## Bloqueos` | Lo que impide avanzar y de qué depende | Dificultades ya resueltas |
-| `## Siguiente paso` | Una frase imperativa con fichero y línea | Una lista de opciones |
-| `## Trampas` | Lo que te hizo perder tiempo y volvería a hacerlo | Lo obvio del lenguaje |
+| `State` | What is done and what is not, with concrete paths | Narrating the session |
+| `Decisions and why` | One line per decision: "what — why" | The what without the why |
+| `Blockers` | What prevents progress and what it depends on | Difficulties already solved |
+| `Next step` | One imperative sentence with file and line | A list of options |
+| `Traps` | What cost you time and would cost it again | The obvious parts of the language |
 
-**Regla dura: si una sección no aplica, no la escribas.** Nada de «Bloqueos:
-ninguno», «N/A» ni «—». El validador las rechaza, y las secciones vacías son
-exactamente por donde estos documentos engordan.
+Use the section names exactly as `context` printed them: they follow the
+configured language.
 
-Qué merece el presupuesto:
+**Hard rule: if a section does not apply, do not write it.** No "Blockers: none",
+no "N/A", no "—". The validator rejects them, and empty sections are exactly where
+these documents put on weight.
 
-- **El porqué de las decisiones.** El *qué* ya está en el código y en git; el
-  *porqué* no está en ninguna parte y es lo que se pierde al cerrar la sesión.
-- **Rutas y líneas concretas**, no descripciones («`src/pagos.ts:214`», no «el
-  módulo de pagos»).
-- **Lo que no se deduce leyendo el repo.** Si se recupera en 30 segundos mirando
-  el código, no lo escribas.
+What earns the budget:
 
-No repitas la rama, el commit ni los ficheros modificados: eso lo pone el código.
+- **The why behind decisions.** The *what* is already in the code and in git; the
+  *why* is nowhere and is what dies when the session closes.
+- **Concrete paths and lines**, not descriptions ("`src/pay.ts:214`", not "the
+  payments module").
+- **What you cannot deduce by reading the repo.** If 30 seconds of reading the
+  code recovers it, leave it out.
 
-## 4. Escribe
+Do not repeat the branch, the commit or the changed files: the code adds those.
+
+## 4. Write it
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" escribir --modo <memoria|continuacion>
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" write --mode <memory|continue>
 ```
 
-Según el código de salida:
+By exit code:
 
-- **0** — escrito. Reporta al usuario la ruta, el modo y las líneas usadas. **Para
-  ahí**: no abras sesión nueva y no sigas trabajando.
-- **1 — no cabe.** Recorta y repite. Si te rechaza dos veces, la tercera **no
-  reescribas más corto: borra una sección entera**. Acortar frases no baja 27
-  líneas; borrar `Trampas` sí. Reescribe el borrador **entero** con `Write`, nunca
-  con `Edit`.
-- **2 — estructura mal.** Arregla lo que diga el error (falta `Estado`, sección
-  inventada, relleno, `continuacion` sin `Siguiente paso`). No es un problema de
-  tamaño: no recortes.
-- **3 — entorno.** Para y cuéntaselo al usuario. No reintentes.
+- **0** — written. Report the path, the mode and the lines used. **Stop there**:
+  do not open a new session and do not carry on working.
+- **1 — does not fit.** Trim and repeat. If it rejects you twice, on the third
+  attempt **do not rewrite shorter: delete a whole section**. Shortening sentences
+  does not save 27 lines; deleting `Traps` does. Rewrite the **whole** draft with
+  `Write`, never `Edit`.
+- **2 — wrong structure.** Fix what the error says (missing required section,
+  invented section, filler, `continue` without a next step). This is not a size
+  problem: do not trim.
+- **3 — environment.** Stop and tell the user. Do not retry.
 
-## Cuando te lo pide el hook tras una compactación
+## When the hook asks you after a compaction
 
-Si llegas aquí porque baton te lo pidió al terminar un turno, el resumen de la
-compactación está en tu contexto: es tu mejor material. Haz lo mismo de siempre y
-sigue el presupuesto — **no copies el resumen**, destílalo.
+If you got here because baton asked at the end of a turn, the compaction summary
+is in your context: it is your best material. Do the same as always and respect
+the budget — **do not copy the summary, distil it**.

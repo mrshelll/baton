@@ -1,6 +1,6 @@
 {
   "name": "baton",
-  "description": "Marketplace de baton: traspaso de contexto entre sesiones de Claude Code, con documento de tamano acotado por codigo.",
+  "description": "baton's marketplace: context handoff between Claude Code sessions, with a code-enforced size cap.",
   "owner": {
     "name": "Miguelacho",
     "email": "ingmiguelangel23@gmail.com"
@@ -8,8 +8,8 @@
   "plugins": [
     {
       "name": "baton",
-      "description": "Traspaso de contexto que no engorda: documento reescrito entero, presupuesto duro por codigo, modos continuacion/memoria y aviso de frescura contra git.",
-      "version": "0.2.1",
+      "description": "A handoff that does not grow: whole rewrite, hard budget enforced by code, continue/memory modes and a freshness notice against git. English and Spanish.",
+      "version": "0.3.0",
       "source": "./",
       "author": {
         "name": "Miguelacho"

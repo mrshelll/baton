@@ -1,7 +1,7 @@
 {
   "name": "baton",
-  "version": "0.2.1",
-  "description": "Traspaso de contexto entre sesiones de Claude Code con un documento que NO crece: se reescribe entero cada vez, con presupuesto duro de lineas y caracteres validado por codigo. Dos modos: continuacion (retoma la tarea a medias) y memoria (ten esto presente y ESPERA instrucciones). Los campos deterministas -rama, commit, ficheros sin commitear, fecha- los genera el codigo desde git, no el modelo. Al inyectar avisa de la frescura comparando con git, pero nunca caduca.",
+  "version": "0.3.0",
+  "description": "Context handoff between Claude Code sessions with a document that does NOT grow: rewritten whole every time, with a hard line and character budget enforced by code and derived from the harness's real 8000-character ceiling. Two modes: continue (resume the unfinished task) and memory (keep this in mind and WAIT for instructions). Git facts -branch, commit, uncommitted files, date- come from the code, not the model. On injection it flags freshness against git, but never expires. English and Spanish.",
   "author": {
     "name": "Miguelacho",
     "email": "ingmiguelangel23@gmail.com"
@@ -11,11 +11,11 @@
   "license": "MIT",
   "keywords": [
     "handoff",
-    "traspaso",
     "context",
     "session",
     "compaction",
-    "memoria",
-    "git"
+    "memory",
+    "git",
+    "i18n"
   ]
 }

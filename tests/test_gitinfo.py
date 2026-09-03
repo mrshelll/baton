@@ -1,159 +1,163 @@
-"""git: snapshot determinista y aviso de frescura. Degradar siempre, nunca lanzar."""
+"""git: deterministic snapshot and freshness notice. Always degrade, never raise."""
 import os
 import shutil
 import sys
 import tempfile
 import unittest
-from pathlib import Path
 
-from tests.ayudas import RAIZ_REPO, CasoBase
+from tests.helpers import REPO_ROOT, BaseCase
 
-sys.path.insert(0, str(RAIZ_REPO))
-from lib import gitinfo  # noqa: E402
+sys.path.insert(0, str(REPO_ROOT))
+from lib import gitinfo, output  # noqa: E402
+
+S = output.load_strings("en")
 
 
-class SinGit:
-    """Deja el PATH sin `git`, para probar el camino degradado de verdad."""
+class NoGit:
+    """Leaves PATH without `git`, to exercise the degraded path for real."""
 
     def __enter__(self):
         self._path = os.environ.get("PATH", "")
-        self._vacio = tempfile.mkdtemp(prefix="baton-sin-git-")
-        os.environ["PATH"] = self._vacio
-        gitinfo.limpiar_cache_git()
+        self._empty = tempfile.mkdtemp(prefix="baton-no-git-")
+        os.environ["PATH"] = self._empty
+        gitinfo.clear_git_cache()
         return self
 
     def __exit__(self, *exc):
         os.environ["PATH"] = self._path
-        shutil.rmtree(self._vacio, ignore_errors=True)
-        gitinfo.limpiar_cache_git()
+        shutil.rmtree(self._empty, ignore_errors=True)
+        gitinfo.clear_git_cache()
 
 
-class TestSnapshot(CasoBase):
-    def test_repo_limpio(self):
+class TestSnapshot(BaseCase):
+    def test_clean_repo(self):
         self.init_git()
-        s = gitinfo.snapshot(self.proyecto)
-        self.assertTrue(s.hay_git)
-        self.assertEqual(s.rama, "main")
+        s = gitinfo.snapshot(self.project)
+        self.assertTrue(s.has_git)
+        self.assertEqual(s.branch, "main")
         self.assertEqual(len(s.commit), 7)
-        self.assertEqual(s.sucios, [])
+        self.assertEqual(s.dirty, [])
 
-    def test_ficheros_sin_commitear_aparecen(self):
+    def test_uncommitted_files_show_up(self):
         self.init_git()
-        for nombre in ("a.txt", "b.txt", "c.txt"):
-            (self.proyecto / nombre).write_text("x", encoding="utf-8")
-        s = gitinfo.snapshot(self.proyecto)
-        self.assertEqual(len(s.sucios), 3)
-        self.assertIn("a.txt", s.sucios)
+        for name in ("a.txt", "b.txt", "c.txt"):
+            (self.project / name).write_text("x", encoding="utf-8")
+        s = gitinfo.snapshot(self.project)
+        self.assertEqual(len(s.dirty), 3)
+        self.assertIn("a.txt", s.dirty)
 
-    def test_nombres_con_espacios_y_tildes(self):
+    def test_names_with_spaces_and_accents(self):
         self.init_git()
-        (self.proyecto / "un fichero con ñ y tildé.txt").write_text("x", encoding="utf-8")
-        s = gitinfo.snapshot(self.proyecto)
-        self.assertIn("un fichero con ñ y tildé.txt", s.sucios)
+        (self.project / "a file with ñ and tildé.txt").write_text("x", encoding="utf-8")
+        self.assertIn("a file with ñ and tildé.txt", gitinfo.snapshot(self.project).dirty)
 
-    def test_muchos_sucios_se_resumen(self):
+    def test_many_dirty_files_are_summarised(self):
         self.init_git()
         for i in range(30):
-            (self.proyecto / f"f{i:02d}.txt").write_text("x", encoding="utf-8")
-        s = gitinfo.snapshot(self.proyecto)
-        bloque = gitinfo.bloque_contexto(s)
-        self.assertLessEqual(len(bloque.split("\n")), 7, bloque)
-        self.assertIn("+20 mas", bloque)
+            (self.project / f"f{i:02d}.txt").write_text("x", encoding="utf-8")
+        block = gitinfo.context_block(gitinfo.snapshot(self.project), S)
+        self.assertLessEqual(len(block.split("\n")), 7, block)
+        self.assertIn("+20 more", block)
 
-    def test_repo_sin_commits_no_revienta(self):
+    def test_repo_without_commits_does_not_break(self):
         self.init_git(commit=False)
-        s = gitinfo.snapshot(self.proyecto)
-        self.assertTrue(s.hay_git)
-        self.assertEqual(s.commit, "sin-commits")
+        s = gitinfo.snapshot(self.project)
+        self.assertTrue(s.has_git)
+        self.assertEqual(s.commit, "no-commits")
 
-    def test_directorio_que_no_es_repo(self):
-        s = gitinfo.snapshot(self.proyecto)
-        self.assertFalse(s.hay_git)
-        self.assertEqual(s.rama, "sin-git")
-        self.assertEqual(s.commit, "sin-git")
+    def test_directory_that_is_not_a_repo(self):
+        s = gitinfo.snapshot(self.project)
+        self.assertFalse(s.has_git)
+        self.assertEqual(s.branch, "no-git")
 
-    def test_sin_git_en_el_path(self):
+    def test_no_git_on_the_path(self):
         self.init_git()
-        with SinGit():
-            s = gitinfo.snapshot(self.proyecto)
-        self.assertFalse(s.hay_git)
-        self.assertEqual(s.commit, "sin-git")
+        with NoGit():
+            s = gitinfo.snapshot(self.project)
+        self.assertFalse(s.has_git)
+        self.assertEqual(s.commit, "no-git")
 
-    def test_el_bloque_de_contexto_nunca_pasa_de_seis_lineas(self):
+    def test_the_context_block_never_exceeds_six_lines(self):
         self.init_git()
-        s = gitinfo.snapshot(self.proyecto)
-        self.assertLessEqual(len(gitinfo.bloque_contexto(s).split("\n")), 6)
+        block = gitinfo.context_block(gitinfo.snapshot(self.project), S)
+        self.assertLessEqual(len(block.split("\n")), 6)
 
-
-class TestFrescura(CasoBase):
-    def test_documento_al_dia_no_dice_nada(self):
+    def test_batons_own_files_are_not_the_users_work(self):
         self.init_git()
-        s = gitinfo.snapshot(self.proyecto)
-        f = gitinfo.frescura(self.proyecto, gitinfo.ahora_iso(), s.rama, s.commit)
-        self.assertEqual(f.aviso(), "")
+        (self.project / ".baton" / "local").mkdir(parents=True)
+        (self.project / ".baton" / "HANDOFF.md").write_text("x", encoding="utf-8")
+        (self.project / "code.py").write_text("y", encoding="utf-8")
+        self.assertEqual(gitinfo.snapshot(self.project).dirty, ["code.py"])
 
-    def test_commits_nuevos_se_cuentan(self):
+
+class TestFreshness(BaseCase):
+    def freshness(self, date, branch, commit):
+        return gitinfo.freshness(self.project, date, branch, commit, S)
+
+    def test_up_to_date_document_says_nothing(self):
         self.init_git()
-        viejo = gitinfo.snapshot(self.proyecto).commit
+        s = gitinfo.snapshot(self.project)
+        self.assertEqual(self.freshness(gitinfo.now_iso(), s.branch, s.commit).notice(), "")
+
+    def test_new_commits_are_counted(self):
+        self.init_git()
+        old = gitinfo.snapshot(self.project).commit
         for i in range(3):
-            (self.proyecto / f"n{i}.txt").write_text("x", encoding="utf-8")
+            (self.project / f"n{i}.txt").write_text("x", encoding="utf-8")
             self.git("add", "-A")
             self.git("commit", "-q", "-m", f"c{i}")
-        f = gitinfo.frescura(self.proyecto, gitinfo.ahora_iso(), "main", viejo)
-        self.assertEqual(f.commits_nuevos, 3)
-        self.assertIn("3 commits", f.aviso())
+        f = self.freshness(gitinfo.now_iso(), "main", old)
+        self.assertEqual(f.new_commits, 3)
+        self.assertIn("3 new commits", f.notice())
 
-    def test_rama_distinta_nombra_las_dos(self):
+    def test_freshness_ignores_batons_own_files(self):
         self.init_git()
-        s = gitinfo.snapshot(self.proyecto)
-        f = gitinfo.frescura(self.proyecto, gitinfo.ahora_iso(), "otra-rama", s.commit)
-        self.assertIn("otra-rama", f.aviso())
-        self.assertIn("main", f.aviso())
+        old = gitinfo.snapshot(self.project).commit
+        (self.project / ".baton").mkdir()
+        (self.project / ".baton" / "HANDOFF.md").write_text("x", encoding="utf-8")
+        (self.project / "code.py").write_text("y", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "changes")
+        f = self.freshness(gitinfo.now_iso(), "main", old)
+        self.assertEqual(f.changed_files, 1, "only code.py is the user's work")
 
-    def test_commit_desaparecido_avisa_de_rebase(self):
+    def test_different_branch_names_both(self):
         self.init_git()
-        f = gitinfo.frescura(self.proyecto, gitinfo.ahora_iso(), "main", "0" * 7)
-        self.assertTrue(f.commit_perdido)
-        self.assertIn("ya no existe", f.aviso())
+        s = gitinfo.snapshot(self.project)
+        notice = self.freshness(gitinfo.now_iso(), "other-branch", s.commit).notice()
+        self.assertIn("other-branch", notice)
+        self.assertIn("main", notice)
 
-    def test_documento_viejo_dice_la_edad(self):
+    def test_lost_commit_warns_about_a_rebase(self):
         self.init_git()
-        s = gitinfo.snapshot(self.proyecto)
-        f = gitinfo.frescura(self.proyecto, "2020-01-01T00:00:00Z", s.rama, s.commit)
-        self.assertIn("dias", f.aviso())
+        f = self.freshness(gitinfo.now_iso(), "main", "0" * 7)
+        self.assertTrue(f.commit_lost)
+        self.assertIn("no longer exists", f.notice())
 
-    def test_sin_git_solo_puede_hablar_de_la_edad(self):
-        f = gitinfo.frescura(self.proyecto, "2020-01-01T00:00:00Z", "main", "abc1234")
-        aviso = f.aviso()
-        self.assertIn("dias", aviso)
-        self.assertIn("no es un repositorio git", aviso)
-
-    def test_fecha_ilegible_no_revienta(self):
+    def test_old_document_states_its_age(self):
         self.init_git()
-        f = gitinfo.frescura(self.proyecto, "ayer por la tarde", "main", "abc1234")
-        self.assertIsInstance(f.aviso(), str)
+        s = gitinfo.snapshot(self.project)
+        self.assertIn("days ago", self.freshness("2020-01-01T00:00:00Z", s.branch, s.commit).notice())
+
+    def test_without_git_it_can_only_talk_about_age(self):
+        notice = self.freshness("2020-01-01T00:00:00Z", "main", "abc1234").notice()
+        self.assertIn("days ago", notice)
+        self.assertIn("not a git repository", notice)
+
+    def test_unparseable_date_does_not_raise(self):
+        self.init_git()
+        self.assertIsInstance(self.freshness("yesterday afternoon", "main", "abc1234").notice(), str)
+
+    def test_every_notice_carries_the_same_marker(self):
+        # One marker to look for, not three wordings saying the same thing.
+        self.init_git()
+        s = gitinfo.snapshot(self.project)
+        for args in (("2020-01-01T00:00:00Z", s.branch, s.commit),
+                     (gitinfo.now_iso(), "other", s.commit),
+                     (gitinfo.now_iso(), "main", "0" * 7)):
+            with self.subTest(args=args):
+                self.assertIn("Freshness notice", self.freshness(*args).notice())
 
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class TestNoSeCuentaASiMismo(CasoBase):
-    def test_los_ficheros_de_baton_no_son_trabajo_del_usuario(self):
-        self.init_git()
-        (self.proyecto / ".baton" / "local").mkdir(parents=True)
-        (self.proyecto / ".baton" / "TRASPASO.md").write_text("x", encoding="utf-8")
-        (self.proyecto / "codigo.py").write_text("y", encoding="utf-8")
-        s = gitinfo.snapshot(self.proyecto)
-        self.assertEqual(s.sucios, ["codigo.py"])
-
-    def test_la_frescura_tampoco_cuenta_los_ficheros_de_baton(self):
-        self.init_git()
-        viejo = gitinfo.snapshot(self.proyecto).commit
-        (self.proyecto / ".baton").mkdir()
-        (self.proyecto / ".baton" / "TRASPASO.md").write_text("x", encoding="utf-8")
-        (self.proyecto / "codigo.py").write_text("y", encoding="utf-8")
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", "cambios")
-        f = gitinfo.frescura(self.proyecto, gitinfo.ahora_iso(), "main", viejo)
-        self.assertEqual(f.ficheros_cambiados, 1, "solo codigo.py es trabajo del usuario")

@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""CLI de baton. Lo invocan la skill y tambien tu, a mano.
+"""baton's CLI. Called by the skill, and by you when you want to look.
 
-Subcomandos:
-  contexto  lo que el modelo necesita saber antes de redactar (breve)
-  escribir  valida el borrador, lo mide, lo compone y lo escribe
-  doctor    diagnostica por que baton no esta haciendo lo que esperas
+Subcommands:
+  context   what the model needs to know before drafting (kept short)
+  write     validate the draft, measure it, compose it and write it
+  show      the current handoff and what injecting it costs
+  doctor    diagnose why baton is not doing what you expect
 
-Los codigos de salida son el protocolo con el modelo, no decoracion, y por eso
-son distintos entre si: "no cabe" se arregla recortando y "esta mal montado" se
-arregla cambiando la forma. Con un unico codigo de error el modelo probaria la
-solucion equivocada.
+The exit codes are the protocol with the model, not decoration, and that is why
+they differ: "does not fit" is fixed by trimming and "is put together wrong" is
+fixed by changing its shape. With a single error code the model would try the
+wrong remedy.
 
-  0 escrito   1 presupuesto excedido   2 borrador invalido   3 entorno
+  0 written   1 over budget   2 invalid draft   3 environment
 """
 from __future__ import annotations
 
@@ -26,314 +27,310 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import almacen, config, documento, gitinfo, presupuesto, salida  # noqa: E402
+from lib import budget, config, document, gitinfo, output, storage  # noqa: E402
 
-RAIZ_PLUGIN = Path(__file__).resolve().parent.parent
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
-OK, PRESUPUESTO, INVALIDO, ENTORNO = 0, 1, 2, 3
+OK, OVER_BUDGET, INVALID, ENVIRONMENT = 0, 1, 2, 3
 
-#: Tres intentos y baton se hace cargo. Un contador visible corta mas bucles
-#: que cualquier instruccion, y un tope bajo evita que el modelo se atasque
-#: justo cuando ibas a cerrar la sesion.
-MAX_INTENTOS = 3
+#: Three attempts and baton takes over. A visible counter breaks more loops than
+#: any instruction, and a low cap stops the model getting stuck exactly when you
+#: were about to close the session.
+MAX_ATTEMPTS = 3
 
 
-def _edad_bitacora(rutas: almacen.Rutas):
-    """Devuelve (ultima_marca, horas_desde_entonces) o (None, None)."""
+def _project(args):
+    """Root, config, paths and strings: the preamble to almost every subcommand."""
+    root = storage.project_root(args.cwd or os.getcwd())
+    cfg = config.load(root)
+    paths = storage.Paths(root, document_rel=cfg["document"])
+    return root, cfg, paths, output.load_strings(cfg["language"])
+
+
+def _gitignore_covers(root: Path) -> bool:
     try:
-        lineas = [l for l in rutas.bitacora.read_text(encoding="utf-8").split("\n") if l.strip()]
-        ts = json.loads(lineas[-1])["ts"] if lineas else ""
-    except Exception:
-        return None, None
-    cuando = almacen.desde_utc(ts)
-    if cuando is None:
-        return None, None
-    return ts, (datetime.now(timezone.utc) - cuando) / timedelta(hours=1)
+        text = (root / ".gitignore").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(l.strip().rstrip("/") == ".baton/local" for l in text.split("\n"))
 
 
-def _plugin_habilitado() -> bool | None:
-    """True/False segun ~/.claude/settings.json; None si no se puede saber."""
-    try:
-        ajustes = json.loads((Path.home() / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        habilitados = ajustes.get("enabledPlugins") or {}
-        return any(k.split("@")[0] == "baton" and v for k, v in habilitados.items())
-    except Exception:
-        return None
+def cmd_context(args) -> int:
+    """What the model needs BEFORE drafting. Short on purpose.
 
-
-def _contexto_de(args):
-    """Raiz, config y textos: el preambulo de casi todos los subcomandos."""
-    raiz = almacen.raiz_proyecto(args.cwd or os.getcwd())
-    cfg = config.cargar(raiz)
-    rutas = almacen.Rutas(raiz, documento_rel=cfg["documento"])
-    textos = salida.cargar_textos()
-    return raiz, cfg, rutas, textos
-
-
-def cmd_contexto(args) -> int:
-    """Lo que el modelo necesita ANTES de redactar. Corto a proposito.
-
-    Si este comando fuera largo, se comeria en el contexto justo lo que baton
-    intenta ahorrar.
+    If this command were long it would eat, in context, exactly what baton is
+    trying to save.
     """
-    raiz, cfg, rutas, textos = _contexto_de(args)
-    s = gitinfo.snapshot(raiz)
-    out = [f"proyecto: {raiz}", f"documento: {rutas.documento}",
-           f"borrador: escribe SOLO el cuerpo en {rutas.borrador}"]
+    root, cfg, paths, strings = _project(args)
+    snap = gitinfo.snapshot(root)
+    limits = cfg["limits"]
+    out = [
+        f"project: {root}",
+        f"document: {paths.document}",
+        f"draft: write ONLY the body into {paths.draft}",
+        f"budget: {limits['lines']} lines / {limits['characters']} characters (whole document)",
+        "valid sections: " + ", ".join(strings["sections"].values()),
+        f"required: {strings['sections'][strings['required_section']]}"
+        " -- the rest only if they apply (never write 'none')",
+        f"language: {cfg['language']}",
+        "",
+        "git context (baton adds this, do not write it yourself):",
+    ]
+    out += ["  " + l for l in gitinfo.context_block(snap, strings).split("\n")]
 
-    t = cfg["topes"]
-    out.append(f"presupuesto: {t['lineas']} lineas / {t['caracteres']} caracteres (todo el documento)")
-    out.append("secciones validas: " + ", ".join(textos["secciones"].values()))
-    out.append(f"obligatoria: {textos['secciones'][textos['seccion_obligatoria']]}"
-               " -- las demas, solo si aplican (nunca escribas 'ninguno')")
-    out.append("")
-    out.append("contexto de git (lo pone baton, no lo escribas tu):")
-    out += ["  " + l for l in gitinfo.bloque_contexto(s).split("\n")]
-
-    if rutas.documento.is_file():
+    if paths.document.is_file():
         try:
-            actual = rutas.documento.read_text(encoding="utf-8", errors="replace")
-            m = presupuesto.medir(actual)
-            campos = documento.leer_campos(actual)
-            out.append("")
-            out.append(f"traspaso actual: modo {documento.leer_modo(actual)}, "
-                       f"{m.lineas} lineas, escrito {campos.get('fecha', '?')}")
+            current = paths.document.read_text(encoding="utf-8", errors="replace")
+            m = budget.measure(current)
+            out += ["", f"current handoff: {document.read_mode(current)} mode, {m.lines} lines, "
+                        f"written {document.read_fields(current).get('date', '?')}"]
         except OSError:
             pass
     else:
-        out.append("")
-        out.append("traspaso actual: no hay. Este /baton activa baton en este proyecto.")
+        out += ["", "current handoff: none. This /baton enables baton in this project."]
 
-    if s.hay_git and not _gitignore_cubre(raiz):
-        out.append("")
-        out.append("falta en .gitignore (una linea):  .baton/local/")
-
-    for aviso in cfg.avisos:
-        out.append(f"aviso de config: {aviso}")
+    if snap.has_git and not _gitignore_covers(root):
+        out += ["", "missing from .gitignore (one line):  .baton/local/"]
+    out += [f"config warning: {w}" for w in cfg.warnings]
 
     print("\n".join(out))
     return OK
 
 
-def _gitignore_cubre(raiz: Path) -> bool:
+def _attempts(paths: storage.Paths, fingerprint: str) -> int:
+    """How many times in a row THIS draft has failed on budget."""
     try:
-        texto = (raiz / ".gitignore").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    return any(l.strip().rstrip("/") == ".baton/local" for l in texto.split("\n"))
-
-
-def _intentos(rutas: almacen.Rutas, huella: str) -> int:
-    """Cuantas veces seguidas ha fallado ESTE borrador por presupuesto."""
-    try:
-        datos = json.loads(rutas.intentos.read_text(encoding="utf-8"))
-        if datos.get("huella") != huella:
+        data = json.loads(paths.attempts.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("fingerprint") != fingerprint:
             return 0
-        cuando = almacen.desde_utc(datos.get("ts"))
-        if cuando is None or datetime.now(timezone.utc) - cuando > timedelta(minutes=30):
-            return 0  # una sesion vieja no arrastra intentos a la de hoy
-        return int(datos.get("intentos", 0))
+        when = storage.from_utc(data.get("ts"))
+        if when is None or (datetime.now(timezone.utc) - when) > timedelta(minutes=30):
+            return 0  # an old session does not drag attempts into today's
+        return int(data.get("attempts", 0))
     except Exception:
         return 0
 
 
-def _anotar_intento(rutas: almacen.Rutas, huella: str, n: int) -> None:
+def _record_attempt(paths: storage.Paths, fingerprint: str, n: int) -> None:
     try:
-        rutas.asegurar_local()
-        rutas.intentos.write_text(json.dumps(
-            {"huella": huella, "intentos": n, "ts": almacen.ahora_utc()}), encoding="utf-8")
+        paths.ensure_local()
+        paths.attempts.write_text(json.dumps(
+            {"fingerprint": fingerprint, "attempts": n, "ts": storage.now_utc()}),
+            encoding="utf-8")
     except OSError:
         pass
 
 
-def cmd_escribir(args) -> int:
-    """Valida, mide, compone y escribe. El modelo NUNCA escribe el fichero."""
-    raiz, cfg, rutas, textos = _contexto_de(args)
-    if args.modo not in documento.MODOS:
-        print(f"baton: modo invalido '{args.modo}'. Usa: {' o '.join(documento.MODOS)}",
-              file=sys.stderr)
-        return INVALIDO
+def _minimal_escape(parsed, strings, cfg, assemble, attempts):
+    """Compose a minimal handoff when the draft will not fit after N attempts.
 
-    ruta_borrador = Path(args.borrador) if args.borrador else rutas.borrador
-    try:
-        crudo = ruta_borrador.read_text(encoding="utf-8")
-    except OSError:
-        print(f"baton: no encuentro el borrador en {ruta_borrador}.\n"
-              f"Escribe ahi SOLO el cuerpo del traspaso (con Write) y repite el comando.",
-              file=sys.stderr)
-        return INVALIDO
-
-    parte = documento.validar_borrador(crudo, modo=args.modo, textos=textos)
-    if not parte.valido:
-        print("baton: el borrador no cumple el contrato. No se ha escrito nada.",
-              file=sys.stderr)
-        for e in parte.errores:
-            print(f"  - {e}", file=sys.stderr)
-        return INVALIDO
-
-    s = gitinfo.snapshot(raiz)
-    def _montar(cuerpo):
-        return documento.componer(
-            cuerpo=cuerpo, modo=args.modo, fecha=gitinfo.ahora_iso(),
-            rama=s.rama, commit=s.commit,
-            contexto=gitinfo.bloque_contexto(s), textos=textos)
-
-    final = _montar(parte.cuerpo)
-    veredicto = presupuesto.evaluar(final, cfg["topes"])
-
-    if not veredicto.cabe:
-        huella_borrador = documento.huella(final, textos["seccion_contexto"])
-        intento = _intentos(rutas, huella_borrador) + 1
-        if intento < MAX_INTENTOS:
-            _anotar_intento(rutas, huella_borrador, intento)
-            print(presupuesto.informe(veredicto, parte.cuerpo, intento, MAX_INTENTOS,
-                                      str(rutas.documento)), file=sys.stderr)
-            return PRESUPUESTO
-        # Ultimo recurso: un minimo honesto y declarado, cortado por lineas
-        # completas. Nunca una frase a medias fingiendo estar entera.
-        final = _escape_minimo(parte, textos, cfg, _montar, intento)
-
-    try:
-        almacen.escribir_documento(rutas, final, historial_max=cfg["historial_max"])
-    except (almacen.OcupadoError, almacen.EntornoError) as exc:
-        print(f"baton: {exc}", file=sys.stderr)
-        return ENTORNO
-
-    m = presupuesto.medir(final)
-    print(f"baton: traspaso escrito en {rutas.documento}\n"
-          f"  modo {args.modo} - {m.lineas}/{cfg['topes']['lineas']} lineas, "
-          f"{m.caracteres}/{cfg['topes']['caracteres']} caracteres (~{m.tokens} tokens)")
-    return OK
-
-
-def _escape_minimo(parte, textos, cfg, montar, intentos):
-    """Compone un traspaso minimo cuando el borrador no cabe tras N intentos.
-
-    Se queda con la seccion obligatoria, recortada por LINEAS COMPLETAS, y lo
-    declara dentro del propio documento. Es truncar, si -- pero truncar
-    diciendolo, que es lo contrario de dejar una frase a medias con aspecto de
-    estar entera.
+    Keeps the required section, trimmed on WHOLE LINE boundaries, and declares
+    it inside the document itself. It is truncation, yes -- but truncation that
+    says so, which is the opposite of leaving a half sentence looking whole.
     """
-    slug = textos["seccion_obligatoria"]
-    canonica, contenido = parte.secciones[slug]
-    marca = textos["marca_recorte_escritura"].format(intentos=intentos)
-    fijo = len(montar(f"## {canonica}\n\n{marca}\n"))
-    margen_c = max(cfg["topes"]["caracteres"] - fijo, 200)
-    margen_l = max(cfg["topes"]["lineas"] - len(montar("## x\n").split("\n")) - 2, 3)
-    recortado, _ = presupuesto.recortar_por_lineas(contenido, margen_c, margen_l)
-    return montar(f"## {canonica}\n{recortado.rstrip()}\n\n{marca}\n")
+    slug = strings["required_section"]
+    canonical, content = parsed.sections[slug]
+    marker = strings["write_trim_marker"].format(attempts=attempts)
+    fixed = len(assemble(f"## {canonical}\n\n{marker}\n"))
+    room_chars = max(cfg["limits"]["characters"] - fixed, 200)
+    room_lines = max(cfg["limits"]["lines"] - len(assemble("## x\n").split("\n")) - 2, 3)
+    trimmed, _ = budget.trim_to_lines(content, room_chars, room_lines)
+    return assemble(f"## {canonical}\n{trimmed.rstrip()}\n\n{marker}\n")
 
 
-def cmd_ver(args) -> int:
-    """Muestra el traspaso actual y lo que costaria inyectarlo."""
-    raiz, cfg, rutas, _ = _contexto_de(args)
-    if not rutas.documento.is_file():
-        print(f"baton: este proyecto no tiene traspaso todavia ({rutas.documento}).\n"
-              "Corre /baton para crearlo.")
-        return OK
-    texto = rutas.documento.read_text(encoding="utf-8", errors="replace")
-    m = presupuesto.medir(texto)
-    campos = documento.leer_campos(texto)
-    modo = documento.leer_modo(texto)
-    fresco = gitinfo.frescura(raiz, campos.get("fecha"), campos.get("rama", ""),
-                              campos.get("commit", ""))
-    print(f"{rutas.documento}")
-    print(f"  modo {modo} - {m.lineas}/{cfg['topes']['lineas']} lineas, "
-          f"{m.caracteres}/{cfg['topes']['caracteres']} caracteres (~{m.tokens} tokens)")
-    print(f"  escrito {campos.get('fecha', '?')} en `{campos.get('rama', '?')}` "
-          f"@ {campos.get('commit', '?')}")
-    aviso = fresco.aviso()
-    print(f"  {aviso}" if aviso else "  frescura: al dia")
-    if args.completo:
-        print("\n" + texto)
+def cmd_write(args) -> int:
+    """Validate, measure, compose and write. The model NEVER writes the file."""
+    root, cfg, paths, strings = _project(args)
+    if args.mode not in document.MODES:
+        print(strings["cli"]["invalid_mode"].format(
+            mode=args.mode, valid=" or ".join(document.MODES)), file=sys.stderr)
+        return INVALID
+
+    draft_path = Path(args.draft) if args.draft else paths.draft
+    try:
+        raw = draft_path.read_text(encoding="utf-8")
+    except OSError:
+        print(strings["cli"]["no_draft"].format(path=draft_path), file=sys.stderr)
+        return INVALID
+
+    parsed = document.validate_draft(raw, mode=args.mode, strings=strings)
+    if not parsed.valid:
+        print(strings["cli"]["invalid_draft"], file=sys.stderr)
+        for e in parsed.errors:
+            print(f"  - {e}", file=sys.stderr)
+        return INVALID
+
+    snap = gitinfo.snapshot(root)
+
+    def assemble(body):
+        return document.compose(
+            body=body, mode=args.mode, date=gitinfo.now_iso(),
+            branch=snap.branch, commit=snap.commit,
+            context=gitinfo.context_block(snap, strings), strings=strings)
+
+    final = assemble(parsed.body)
+    verdict = budget.evaluate(final, cfg["limits"])
+
+    if not verdict.fits:
+        fingerprint = document.fingerprint(final, strings["context_section"])
+        attempt = _attempts(paths, fingerprint) + 1
+        if attempt < MAX_ATTEMPTS:
+            _record_attempt(paths, fingerprint, attempt)
+            print(budget.report(verdict, parsed.body, attempt, MAX_ATTEMPTS, strings,
+                                str(paths.document)), file=sys.stderr)
+            return OVER_BUDGET
+        final = _minimal_escape(parsed, strings, cfg, assemble, attempt)
+
+    try:
+        storage.write_document(paths, final, history_max=cfg["history_max"])
+    except (storage.BusyError, storage.StorageError) as exc:
+        print(f"baton: {exc}", file=sys.stderr)
+        return ENVIRONMENT
+
+    m = budget.measure(final)
+    print(strings["cli"]["written"].format(path=paths.document))
+    print(strings["cli"]["stats"].format(
+        mode=args.mode, lines=m.lines, max_lines=cfg["limits"]["lines"],
+        chars=m.characters, max_chars=cfg["limits"]["characters"], tokens=m.tokens))
     return OK
+
+
+def cmd_show(args) -> int:
+    """The current handoff and what injecting it would cost."""
+    root, cfg, paths, strings = _project(args)
+    if not paths.document.is_file():
+        print(f"baton: this project has no handoff yet ({paths.document}).\n"
+              "Run /baton to create one.")
+        return OK
+    text = paths.document.read_text(encoding="utf-8", errors="replace")
+    m = budget.measure(text)
+    fields = document.read_fields(text)
+    print(f"{paths.document}")
+    print(f"  {document.read_mode(text)} mode - {m.lines}/{cfg['limits']['lines']} lines, "
+          f"{m.characters}/{cfg['limits']['characters']} characters (~{m.tokens} tokens)")
+    print(f"  written {fields.get('date', '?')} on `{fields.get('branch', '?')}` "
+          f"@ {fields.get('commit', '?')}")
+    notice = gitinfo.freshness(root, fields.get("date"), fields.get("branch", ""),
+                               fields.get("commit", ""), strings).notice()
+    print(f"  {notice}" if notice else "  freshness: up to date")
+    if args.full:
+        print("\n" + text)
+    return OK
+
+
+def _last_log_entry(paths: storage.Paths):
+    """Returns (stamp, hours since then) or (None, None)."""
+    try:
+        lines = [l for l in paths.log.read_text(encoding="utf-8").split("\n") if l.strip()]
+        if not lines:
+            return None, None
+        ts = json.loads(lines[-1])["ts"]
+        when = storage.from_utc(ts)
+        if when is None:
+            return None, None
+        return ts, (datetime.now(timezone.utc) - when) / timedelta(hours=1)
+    except Exception:
+        return None, None
+
+
+def _plugin_enabled():
+    """True/False from ~/.claude/settings.json; None when it cannot be known."""
+    try:
+        settings = json.loads(
+            (Path.home() / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        enabled = settings.get("enabledPlugins") or {}
+        return any(k.split("@")[0] == "baton" and v for k, v in enabled.items())
+    except Exception:
+        return None
 
 
 def cmd_doctor(args) -> int:
-    """Un hook que no dispara no da error: no da nada.
+    """A hook that does not fire gives no error: it gives nothing.
 
-    Este comando existe para convertir ese silencio en un diagnostico. Ordena
-    las causas por probabilidad real, empezando por la que acierta casi siempre:
-    instalar el plugin sin reiniciar Claude Code.
+    This command exists to turn that silence into a diagnosis. It orders the
+    causes by real likelihood, starting with the one that is almost always
+    right: installing the plugin without restarting Claude Code.
     """
-    raiz = almacen.raiz_proyecto(args.cwd or os.getcwd())
-    lineas = [f"baton doctor -- proyecto: {raiz}", ""]
+    root, cfg, paths, _ = _project(args)
+    out = [f"baton doctor -- project: {root}", ""]
 
-    hooks_json = RAIZ_PLUGIN / "hooks" / "hooks.json"
+    hooks_json = PLUGIN_ROOT / "hooks" / "hooks.json"
     try:
-        eventos = ", ".join(json.loads(hooks_json.read_text(encoding="utf-8"))["hooks"])
-        lineas.append(f"  [ok] hooks.json valido      ({eventos})")
+        events = ", ".join(json.loads(hooks_json.read_text(encoding="utf-8"))["hooks"])
+        out.append(f"  [ok] hooks.json valid       ({events})")
     except Exception as exc:
-        lineas.append(f"  [!!] hooks.json ILEGIBLE    {type(exc).__name__}: {exc}")
+        out.append(f"  [!!] hooks.json UNREADABLE  {type(exc).__name__}: {exc}")
 
-    lineas.append(f"  [ok] python3                {sys.version.split()[0]}")
-    git = shutil.which("git")
-    if git:
+    out.append(f"  [ok] python3                {sys.version.split()[0]}")
+    if shutil.which("git"):
         try:
-            v = subprocess.run([git, "--version"], capture_output=True, text=True, timeout=3)
-            lineas.append(f"  [ok] git                    {v.stdout.strip()}")
+            v = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=3)
+            out.append(f"  [ok] git                    {v.stdout.strip()}")
         except Exception:
-            lineas.append("  [--] git                    presente pero no responde")
+            out.append("  [--] git                    present but not responding")
     else:
-        lineas.append("  [--] git                    ausente (baton funciona igual, sin datos de git)")
+        out.append("  [--] git                    missing (baton still works, without git data)")
 
-    habilitado = _plugin_habilitado()
-    if habilitado is True:
-        lineas.append("  [ok] plugin habilitado      en ~/.claude/settings.json")
-    elif habilitado is False:
-        lineas.append("  [!!] plugin NO habilitado   revisalo con /plugin")
+    enabled = _plugin_enabled()
+    if enabled is True:
+        out.append("  [ok] plugin enabled         in ~/.claude/settings.json")
+    elif enabled is False:
+        out.append("  [!!] plugin NOT enabled     check it with /plugin")
     else:
-        lineas.append("  [--] plugin                 no pude leer ~/.claude/settings.json")
+        out.append("  [--] plugin                 could not read ~/.claude/settings.json")
 
-    lineas.append("")
-    # Sirven para las dos preguntas que quedan: donde esta el documento (puede
-    # estar configurado en otro sitio) y donde la bitacora (nunca se mueve).
-    rutas = almacen.Rutas(raiz, documento_rel=config.cargar(raiz)["documento"])
-    if not rutas.documento.is_file():
-        lineas.append("  Este proyecto aun no usa baton.")
-        lineas.append("  Corre /baton una vez para activarlo aqui; hasta entonces los hooks callan")
-        lineas.append("  a proposito, y eso NO es un fallo.")
-        print("\n".join(lineas))
-        return 0
+    out.append(f"  [ok] language               {cfg['language']} "
+               f"(available: {', '.join(output.available_languages())})")
+    out.append("")
 
-    lineas.append(f"  Documento: {rutas.documento}")
-    ts, horas = _edad_bitacora(rutas)
+    if not paths.document.is_file():
+        out += ["  This project does not use baton yet.",
+                "  Run /baton once to enable it here; until then the hooks stay quiet",
+                "  on purpose, and that is NOT a failure."]
+        print("\n".join(out))
+        return OK
+
+    out.append(f"  Document: {paths.document}")
+    ts, hours = _last_log_entry(paths)
     if ts is None:
-        lineas.append("")
-        lineas.append("  El hook NO ha dejado ni un rastro. Causas por probabilidad:")
-        lineas.append("    1. Instalaste el plugin sin reiniciar Claude Code (los hooks se")
-        lineas.append("       cargan al arrancar).")
-        lineas.append("    2. El plugin esta deshabilitado -- compruebalo con /plugin.")
-        lineas.append(f"    3. python3 no esta en el PATH del harness (aqui si: {sys.version.split()[0]}).")
-    elif horas is not None and horas > 24:
-        lineas.append("")
-        lineas.append(f"  El hook no dispara desde {ts} ({horas:.0f} h). Mismas causas que arriba.")
+        out += ["", "  The hook has left NO trace at all. Causes by likelihood:",
+                "    1. You installed the plugin without restarting Claude Code",
+                "       (hooks are loaded at startup).",
+                "    2. The plugin is disabled -- check it with /plugin.",
+                f"    3. python3 is not on the harness PATH (here it is: {sys.version.split()[0]})."]
+    elif hours is not None and hours > 24:
+        out += ["", f"  The hook has not fired since {ts} ({hours:.0f} h). Same causes as above."]
     else:
-        lineas.append(f"  Ultimo disparo del hook: {ts}")
+        out.append(f"  Last hook run: {ts}")
 
-    print("\n".join(lineas))
-    return 0
+    for w in cfg.warnings:
+        out.append(f"  config warning: {w}")
+    print("\n".join(out))
+    return OK
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="baton", description=__doc__)
-    sub = parser.add_subparsers(dest="comando", required=True)
-    def con_cwd(nombre, ayuda, func):
-        sp = sub.add_parser(nombre, help=ayuda)
-        sp.add_argument("--cwd", default=None, help="directorio del proyecto (por defecto, el actual)")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def with_cwd(name, help_text, func):
+        sp = sub.add_parser(name, help=help_text)
+        sp.add_argument("--cwd", default=None, help="project directory (defaults to the current one)")
         sp.set_defaults(func=func)
         return sp
 
-    con_cwd("contexto", "lo que el modelo necesita antes de redactar", cmd_contexto)
-    esc = con_cwd("escribir", "valida el borrador y escribe el traspaso", cmd_escribir)
-    # Sin `choices`: el modo lo valida cmd_escribir, que puede explicar la
-    # diferencia entre los dos en vez de soltar un error de argparse.
-    esc.add_argument("--modo", required=True,
-                     help="continuacion (hay tarea a medias) o memoria (solo contexto)")
-    esc.add_argument("--borrador", default=None, help="ruta del borrador (por defecto, .baton/local/borrador.md)")
-    ver = con_cwd("ver", "muestra el traspaso actual y lo que cuesta inyectarlo", cmd_ver)
-    ver.add_argument("--completo", action="store_true", help="imprime tambien el documento entero")
-    con_cwd("doctor", "diagnostica la instalacion y el estado del proyecto", cmd_doctor)
+    with_cwd("context", "what the model needs before drafting", cmd_context)
+    write = with_cwd("write", "validate the draft and write the handoff", cmd_write)
+    # No `choices`: cmd_write validates the mode so it can explain the
+    # difference between the two instead of emitting an argparse error.
+    write.add_argument("--mode", required=True,
+                       help="continue (a task is half done) or memory (context only)")
+    write.add_argument("--draft", default=None,
+                       help="draft path (defaults to .baton/local/draft.md)")
+    show = with_cwd("show", "the current handoff and what injecting it costs", cmd_show)
+    show.add_argument("--full", action="store_true", help="also print the whole document")
+    with_cwd("doctor", "diagnose the installation and the project state", cmd_doctor)
+
     args = parser.parse_args(argv)
     return args.func(args)
 
