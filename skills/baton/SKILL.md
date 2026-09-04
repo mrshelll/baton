@@ -12,9 +12,10 @@ branch, commit and git context. Do not write any of that.
 
 ## 0. Which project
 
-**`/baton` takes no arguments.** The user types the command and nothing else: the
-mode is your decision (step 2) and the target is baton's, resolved from disk. In
-almost every session there is nothing to do here — run `context` and carry on.
+**`/baton` takes no arguments.** Anything the user types after it is a note, not
+a flag: the mode is your decision (step 2) and the target is baton's, resolved
+from disk. In almost every session there is nothing to do here — run `context`
+and carry on.
 
 The exception is a root that holds several projects. Then the commands resolve
 the target in this order, without you doing anything:
@@ -33,10 +34,19 @@ creates `.baton/`, which is a root marker, so the root may move between the two
 commands; the value keeps meaning the same folder, but only if you do not change
 it halfway.
 
-Two rules about that question. Never work the answer out from which files the
-session touched — in a session that touched two projects, guessing wrong
-overwrites a good handoff. And never ask the user to type the flag: they answer
-in words, you pass the flag.
+There is one case where the command does not stop but tells you: a root with no
+handoff and no project yet — a client folder, a factory — while this session's
+work was in one of its subfolders. `context` says so and resolves to the
+root, because from disk this is indistinguishable from an ordinary repo on
+its first `/baton`. You are not: if the work belonged to a subfolder, ask the
+user in ONE line — that folder, or the root — and pass `--project <folder>` or
+`.`. In an ordinary repo nothing was in a subfolder and there is nothing to ask.
+
+Two rules about these questions. The conversation tells you whether there is a
+question to ask; it never tells you where to write. Never work the answer out
+from which files the session touched — in a session that touched two projects,
+guessing wrong overwrites a good handoff. And never ask the user to type the
+flag: they answer in words, you pass the flag.
 
 ## 1. Ask for the context
 
@@ -49,7 +59,8 @@ valid — in the configured language. Read it before drafting.
 
 ## 2. Pick the mode
 
-If the user gave you the mode in the arguments, use it and skip to step 3.
+If the user's note asks for a mode, that is their decision: use it and skip to
+step 3.
 
 Choose `continue` **only** if you can answer yes to all three:
 

@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-300-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-303-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -176,16 +176,18 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor
 ## Uso
 
 ```bash
-/baton                    # baton elige el modo
-/baton memoria            # fuerzas "solo ten esto presente"
-/baton continuacion       # fuerzas "sigue por aquí"
+/baton                                    # eso es todo
+/baton no retomes, solo ten esto presente # lo que sigue es una nota para el modelo
 ```
+
+baton elige el modo y resuelve a qué proyecto pertenece el traspaso. La nota es
+texto libre: qué quieres que capture, o el modo que quieres.
 
 Y para inspeccionar:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" ver        # resumen y coste
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor     # por qué no funciona
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" show      # resumen y coste
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor    # por qué no funciona
 ```
 
 ## Cómo se ve un traspaso
@@ -311,7 +313,8 @@ siquiera una raíz con un único proyecto decide sola: ser el único proyecto en
 disco no es prueba de que este traspaso sea suyo.
 
 - **El primer traspaso de un proyecto**, cuando nadie ha decidido todavía si
-  pertenece a la carpeta donde estás o a la raíz. Es una decisión de una sola
+  pertenece a una subcarpeta o a la raíz — tanto si la sesión está parada en esa
+  carpeta como si está en la raíz hablando de ella. Es una decisión de una sola
   vez, una por proyecto, para siempre.
 - **Varios proyectos y ninguno cargado**, cuando la sesión nunca dijo de cuál iba.
 
@@ -364,6 +367,12 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
 | `language` | `en` | Idioma de todo lo que lee un humano |
 | `discovery.depth` | `2` | Cuántos niveles se buscan proyectos (1-4). **Solo en la raíz** |
 | `discovery.max_dirs` | `400` | Tope de carpetas miradas por escaneo |
+
+**Las claves de config van en inglés en todos los idiomas.** Son una interfaz de
+máquina, y quien las escribe no debería tener que hablar otro. `"language"` cambia
+lo que lee la gente: los títulos de sección, los mensajes y las instrucciones que
+se inyectan al modelo. Por ahora `en` y `es`; añadir uno es un fichero JSON en
+`templates/`.
 
 Un fichero de config roto no impide usar baton: avisa nombrando el fichero y sigue
 con los valores buenos. Si escribes `lineas_max`, te sugiere `limits.lines`.
@@ -421,8 +430,10 @@ post-compact  -> summary saved, handoff pending (guarda y arma)
 stop          -> handoff requested              (pide, una vez)
 ```
 
-**5. Dos proyectos en una carpeta.** Crea `<raiz>/a/` y `<raiz>/b/` y ejecuta
-`/baton a` y `/baton b` desde una sesión abierta en `<raiz>`.
+**5. Dos proyectos en una carpeta.** Crea `<raiz>/a/` y `<raiz>/b/`. Desde una
+sesión abierta en `<raiz>`, trabaja en `a` y ejecuta `/baton`: debe preguntar en
+una línea si el traspaso es de `a` o de la raíz, y escribir en
+`<raiz>/a/.baton/HANDOFF.md` cuando digas `a`. Luego lo mismo con `b`.
 
 - Abre una sesión nueva en `<raiz>`: recibes el **índice**, sin cuerpo de ningún
   proyecto. Pregunta por el canario de `a` — todavía no debe saberlo.
@@ -455,7 +466,7 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 ./tests/run.sh
 ```
 
-300 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+303 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.

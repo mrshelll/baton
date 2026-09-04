@@ -401,6 +401,32 @@ class TestColdStart(Base):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertTrue((self.project / ".baton" / "HANDOFF.md").is_file())
 
+    def test_a_cold_root_is_told_a_subfolder_may_be_the_target(self):
+        # The fifth destination case, found by tracing the SECOP workflow: the
+        # session sits at a root that has no handoff and no project yet, and the
+        # work was in a subfolder. `context` used to answer as if this were a
+        # plain repo, so a bare /baton planted the root's handoff in silence --
+        # the one-handoff-for-two-projects failure, back in through the door
+        # marked "first time". It still resolves to the root (a plain repo must
+        # not grow a question), but it says so, and says what to ask.
+        p = self.deep_cli(self.project, "context")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("subfolder", p.stdout)
+        self.assertIn("--project", p.stdout)
+
+    def test_the_cold_root_hint_is_gone_once_the_root_has_a_handoff(self):
+        self.handoff(self.project)
+        p = self.deep_cli(self.project, "context")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("subfolder", p.stdout)
+
+    def test_naming_the_root_explicitly_gets_no_hint(self):
+        # `--project .` IS the answer to that question; asking it again would
+        # send the model round in a loop.
+        p = self.deep_cli(self.project, "context", "--project", ".")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("subfolder", p.stdout)
+
     def test_standing_in_a_folder_beats_being_the_only_project(self):
         # radar is the only project with a handoff, but the session is standing
         # in a different folder. Picking radar there is the SECOP failure in

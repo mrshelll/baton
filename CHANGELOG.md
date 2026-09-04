@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.4 — 2026-09-04
+
+### Changed
+- **`/baton` takes a note, not a grammar.** The argument hint advertised
+  `[memory|continue] [project] [note]` while the skill said the command takes no
+  arguments, and the README showed `/baton memory` as normal use, a hundred lines
+  above "You never type arguments". The mode keyword was redundant with the
+  note — "do not resume, just remember this" asks for the same thing in words —
+  and `[project]` was never parsed at all. Anything after `/baton` is now a note;
+  the mode stays the model's decision unless the note settles it.
+- **A cold root says that a subfolder may be the target.** Traced from the way a
+  factory root is actually used: session at the root, work on a subproject, a
+  bare `/baton`. With no handoff and no project anywhere yet, `context` answered
+  as if this were a plain repo and the handoff landed on the root in silence —
+  which made the root a project, and the next `/baton` on another subfolder
+  overwrote it. The one-handoff-for-two-projects failure, back in through the
+  door marked "first time"; in the real install it had not bitten only because
+  the first project was bootstrapped from inside its own folder. `context` now
+  says so at a cold root, and the skill says what to do with it: the
+  conversation decides whether there is a question, the user decides the answer,
+  and a plain repo never hears about it. It still resolves to the root, so the
+  first `/baton` in an ordinary repo is unchanged.
+
+### Fixed
+- The Spanish README documented `/baton memoria`, `/baton continuacion` and
+  `baton.py ver`, none of which exist. The manual check for two projects in one
+  folder said `/baton a` in both languages, an argument the command never read.
+
 ## 0.4.3 — 2026-09-03
 
 ### Changed

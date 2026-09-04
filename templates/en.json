@@ -92,6 +92,7 @@
     "invalid_draft": "baton: the draft does not meet the contract. Nothing has been written.",
     "which_project": "baton: this root holds projects of its own and none is active in this session, so nothing on disk says whose handoff this is. Ask the USER in ONE line: one of the projects below, the root itself (`.`), or a folder that has no handoff yet (its name is enough). Then repeat this command with --project. Never ask them to type the flag themselves; you pass it.",
     "which_target": "baton: the session is standing in `{here}`, under the root `{root}`, and neither has a handoff yet. This is a one-time decision about where this project's handoff will live. Ask the USER in ONE line -- this folder, or the root -- and then repeat this command with --project, passing `{here}` or `.`. Never ask them to type the flag themselves; you pass it.",
+    "cold_root": "baton: cold root -- no handoff here and no project below. If this session's work belongs to a subfolder, that is a one-time decision: ask the USER in ONE line -- that folder, or the root -- and repeat this command with --project <folder> (its name is enough) or `.`. In a plain repo there is nothing to ask: carry on.",
     "unknown_project": "baton: no project matches '{name}'. Pass one of these to --project (a folder name is enough):",
     "loaded": "baton: `{name}` is now this session's active project.",
     "no_handoff_yet": "baton: `{name}` has no handoff yet ({path})."

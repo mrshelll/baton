@@ -175,6 +175,18 @@ def cmd_context(args) -> int:
             pass
     else:
         out += ["", "current handoff: none. This /baton enables baton in this project."]
+        if (ctx.target.is_root and not ctx.found.projects
+                and getattr(args, "project", None) is None):
+            # A root with nothing at all looks exactly like a plain repo on its
+            # first /baton, and for a plain repo that is the right answer. But
+            # when the session's work was in a subfolder, writing here in
+            # silence makes the root a project and the next /baton on another
+            # subfolder overwrites it -- the failure 0.4.0 exists to prevent,
+            # back in through the door marked "first time". The CLI cannot see
+            # the conversation; the model can. So it is told, not asked: the
+            # conversation decides whether there is a question, the user
+            # decides the answer, and a plain repo never hears about it.
+            out.append(strings["cli"]["cold_root"])
 
     if snap.has_git and not _gitignore_covers(root):
         out += ["", "missing from .gitignore (one line):  .baton/local/"]

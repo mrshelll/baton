@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-300-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-303-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -176,10 +176,12 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor
 ## Use
 
 ```bash
-/baton                    # baton picks the mode
-/baton memory             # force "just keep this in mind"
-/baton continue           # force "carry on with this"
+/baton                                    # that is all of it
+/baton do not resume, just remember this  # anything after it is a note for the model
 ```
+
+baton picks the mode and works out which project the handoff belongs to. The
+note is free text: what you want captured, or the mode you want.
 
 And to inspect:
 
@@ -310,7 +312,8 @@ Not even a root with exactly one project decides on its own: being the only
 project on disk is not evidence that this handoff is that project's.
 
 - **The first handoff of a project**, where nobody has decided yet whether it
-  belongs to the folder you are in or to the root. A one-time decision, once per
+  belongs to a subfolder or to the root — whether the session is standing in
+  that folder, or at the root talking about it. A one-time decision, once per
   project, forever.
 - **Several projects, none loaded**, when the session never said which it was
   about.
@@ -422,8 +425,10 @@ post-compact  -> summary saved, handoff pending (saves and arms)
 stop          -> handoff requested              (asks, once)
 ```
 
-**5. Two projects in one folder.** Create `<root>/a/` and `<root>/b/` and run
-`/baton a` and `/baton b` from a session opened at `<root>`.
+**5. Two projects in one folder.** Create `<root>/a/` and `<root>/b/`. From a
+session opened at `<root>`, work on `a` and run `/baton`: it must ask in one line
+whether the handoff belongs to `a` or to the root, and write to
+`<root>/a/.baton/HANDOFF.md` when you say `a`. Then the same for `b`.
 
 - Open a new session at `<root>`: you get the **index**, and no project body. Ask
   for the canary of `a` — it must not know it yet.
@@ -456,7 +461,7 @@ Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
 ./tests/run.sh
 ```
 
-300 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+303 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case
