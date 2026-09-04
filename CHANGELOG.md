@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.3 — 2026-09-03
+
+### Changed
+- **A session that ends waiting on the user now records the questions themselves,
+  in the words they were asked** — not just the problem behind them. Found in a
+  real handoff: the three pending product decisions were all there, numbered and
+  explained, but as problems. The next session would re-ask them in its own
+  words, and an answer already written against the original wording ("yes, but
+  only if it is current") no longer says which question it answers. The budget
+  was not the constraint — that handoff used 85 of its 120 lines. It was drafting
+  guidance the skill did not give.
+
+  This is guidance, not a rule the validator can enforce: it cannot tell a
+  question recorded well from one recorded badly.
+
 ## 0.4.2 — 2026-09-03
 
 Both of these came out of the second real run, minutes after 0.4.1 shipped.

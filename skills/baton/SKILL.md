@@ -75,7 +75,7 @@ Sections, in this order. Only the first is required:
 |---|---|---|
 | `State` | What is done and what is not, with concrete paths | Narrating the session |
 | `Decisions and why` | One line per decision: "what — why" | The what without the why |
-| `Blockers` | What prevents progress and what it depends on | Difficulties already solved |
+| `Blockers` | What prevents progress and what it depends on, **questions to the user in the words you asked them** | Difficulties already solved |
 | `Next step` | One imperative sentence with file and line | A list of options |
 | `Traps` | What cost you time and would cost it again | The obvious parts of the language |
 
@@ -85,6 +85,13 @@ configured language.
 **Hard rule: if a section does not apply, do not write it.** No "Blockers: none",
 no "N/A", no "—". The validator rejects them, and empty sections are exactly where
 these documents put on weight.
+
+**If the session ended waiting on the user, write the questions themselves.** Not
+the problem behind them — the question, in the words you put it. The answer comes
+back keyed to how you asked: reconstruct the question from the problem and you
+will re-ask it differently, and then "yes, but only if it is current" no longer
+says which one it answers. Number them if there are several, so an answer can
+name one. This is the one case where quoting yourself is worth the lines.
 
 What earns the budget:
 
