@@ -88,7 +88,10 @@
   "receipt": {
     "handoff": "baton: traspaso inyectado -- modo {mode}, {lines} líneas, escrito {age}{extra}",
     "stale": ", y el código cambió desde entonces",
-    "more": "  (sin mostrar: {rest})",
+    "section_label": "  {label}",
+    "tail": "  ({parts})",
+    "tail_left_out": "{n} más sin mostrar",
+    "tail_sections": "también en el documento: {rest}",
     "projects": "baton: {n} proyecto(s) disponibles, ninguno cargado:",
     "project_line": "  {name}  {mode} - {age}",
     "also_projects": "  (+ {n} proyecto(s) en el índice)"

@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-321-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-328-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -161,11 +161,21 @@ baton imprime lo que quedó pendiente en la línea del recibo, antes de que
 escribas nada:
 
 ```
-baton: traspaso inyectado -- modo memory, 43 líneas, escrito hace 2 d, y el código cambió desde entonces
-  Bloqueos: 1. ¿sigo con CR-RH-03b, hago primero los cuatro livianos, o cortamos?
-  2. Si algún día quieren dar acceso a solo ciertos locales, decidirlo después cuesta más
-  (sin mostrar: Estado, Trampas)
+baton: traspaso inyectado -- modo memory, 47 líneas, escrito hace 2 h, y el código cambió
+  Bloqueos
+  1. La pregunta que cerró la sesión: ¿sigo con el pesado, hago primero los cuatro livianos
+     para bajar la cola, o cortamos?
+  2. Pregunta de seguridad abierta: si algún día quieren dar acceso a solo ciertos locales,
+     decidirlo después cuesta mucho más que decidirlo ahora.
+  (también en el documento: Estado, Decisiones y su porqué, Trampas)
 ```
+
+**Lo largo se envuelve, nunca se corta.** Un traspaso cortado a media frase miente,
+que es el argumento sobre el que se sostiene el plugin entero, así que el recibo
+gasta su presupuesto en puntos completos y cuenta los que no cupieron. Se respeta
+la numeración del autor — numeró las preguntas para que una respuesta pueda nombrar
+una — y la continuación de un punto cuelga bajo su propio texto, así que una marca
+en el margen izquierdo se ve como un punto nuevo.
 
 **Se extrae, no se resume.** baton no escribe prosa sobre tu trabajo: toma la
 sección tal cual y corta por líneas enteras. Qué sección depende de qué quedó,
@@ -184,9 +194,8 @@ Lo importante no es la lectura. Es que tu primer mensaje deje de ser
 que nombra la sesión en `/resume`: el nombre se genera de tu primer mensaje,
 antes de cualquier respuesta, y se genera una sola vez.
 
-`receipt_lines` dice cuánto puede gastar. El harness reimprime cada línea con su
-propio prefijo, así que es un presupuesto de ruido: con `0` vuelves a la línea
-única que solo prueba que el hook disparó.
+`receipt_lines` dice cuántas líneas puede añadir bajo la primera. Con `0` vuelves
+a la línea única que solo prueba que el hook disparó.
 
 ## Instalación
 
@@ -383,7 +392,7 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
   "inject_on": ["startup", "clear", "compact", "resume", "fork"],
   "cooldown_minutes": 30,
   "receipt": true,
-  "receipt_lines": 5,
+  "receipt_lines": 8,
   "language": "es",
   "discovery": { "depth": 2, "max_dirs": 400 }
 }
@@ -399,7 +408,7 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
 | `inject_on` | los cinco | En qué arranques se inyecta |
 | `cooldown_minutes` | `30` | Mínimo entre dos peticiones automáticas |
 | `receipt` | `true` | La línea que prueba que el hook disparó |
-| `receipt_lines` | `5` | Líneas que el recibo gasta en lo pendiente; `0` deja la línea sola |
+| `receipt_lines` | `8` | Líneas que el recibo añade bajo la primera; `0` deja la línea sola |
 | `language` | `en` | Idioma de todo lo que lee un humano |
 | `discovery.depth` | `2` | Cuántos niveles se buscan proyectos (1-4). **Solo en la raíz** |
 | `discovery.max_dirs` | `400` | Tope de carpetas miradas por escaneo |
@@ -507,7 +516,7 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 ./tests/run.sh
 ```
 
-321 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+328 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.

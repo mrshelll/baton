@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.6 — 2026-09-14
+
+0.4.5 shipped on a premise read off the binary and never checked against a real
+terminal: that the harness reprints every line of a hook message with its own
+`SessionStart:clear says:` prefix. It does not — only the first line carries it,
+the rest come out indented and clean. The receipt had been squeezed to fit a
+cost that was not there.
+
+### Changed
+- **Long items are wrapped, not cut.** The per-line cut at a fixed column landed
+  mid-question on its first real use — "do I carry on with the heavy one, do the
+  four light ones fir…" — which is the exact half-sentence the whole plugin
+  exists to refuse, committed by the one part of it a person actually reads. The
+  budget is now spent in whole items, like the document's own, and the items that
+  did not fit are counted instead of chopped.
+- **A shape a person can scan.** The section owns a line, each item keeps the
+  author's own marker — they numbered the questions so an answer could name one —
+  and a continuation hangs under the text it continues, so a marker at the left
+  margin is visibly a new item rather than more of the last one. Emphasis markers
+  no longer reach the terminal as literal asterisks.
+- `receipt_lines` now means lines added under the first one, and defaults to 8.
+  The old 5 was chosen to ration a prefix that never repeats.
+- Both READMEs stated the prefix claim as fact. Corrected.
+
 ## 0.4.5 — 2026-09-14
 
 Found by using it: open a session, type "let's carry on", and get back "context

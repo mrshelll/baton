@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-321-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-328-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -161,11 +161,21 @@ screen. So baton prints what the session left behind, on the receipt line, befor
 you type anything:
 
 ```
-baton: handoff injected -- memory mode, 43 lines, written 2 d ago, and the code moved since
-  Blockers: 1. do I carry on with CR-RH-03b, do the four light ones first, or stop?
-  2. if they ever want to give someone access to only some venues, deciding later costs more
-  (not shown: State, Traps)
+baton: handoff injected -- memory mode, 47 lines, written 2 h ago, and the code moved since
+  Blockers
+  1. The question that ended the session: do I carry on with the heavy one, do the four
+     light ones first to bring the queue down, or do we stop?
+  2. Security question still open: if they ever want to give someone access to only some
+     venues, deciding that later costs far more than deciding it now.
+  (also in the document: State, Decisions and why, Traps)
 ```
+
+**Long items are wrapped, never cut.** A handoff cut mid-sentence lies, which is
+the argument the whole plugin rests on, so the receipt spends its budget in whole
+items and counts the ones that did not fit. The author's own numbering is kept —
+they numbered the questions so an answer could name one — and a continuation line
+hangs under the text it continues, so a marker at the left margin is visibly a new
+item.
 
 **It is extracted, never summarised.** baton writes no prose about your work: it
 takes the section verbatim and cuts on whole lines. Which section depends on what
@@ -184,9 +194,8 @@ carry on" and becomes the actual decision. That is a better instruction, and it
 is also what names the session in `/resume`: the name is generated from your
 first message, before any reply, and it is generated once.
 
-`receipt_lines` sets how much it may spend. The harness reprints every line with
-its own prefix, so this is a noise budget: `0` goes back to the single line that
-only proves the hook fired.
+`receipt_lines` sets how many lines it may add under the first one. `0` goes back
+to the single line that only proves the hook fired.
 
 ## Install
 
@@ -381,7 +390,7 @@ All optional. `~/.claude/baton.json` for your general preference,
   "inject_on": ["startup", "clear", "compact", "resume", "fork"],
   "cooldown_minutes": 30,
   "receipt": true,
-  "receipt_lines": 5,
+  "receipt_lines": 8,
   "language": "en",
   "discovery": { "depth": 2, "max_dirs": 400 }
 }
@@ -397,7 +406,7 @@ All optional. `~/.claude/baton.json` for your general preference,
 | `inject_on` | all five | Which session starts get the handoff |
 | `cooldown_minutes` | `30` | Minimum between automatic requests |
 | `receipt` | `true` | The line proving the hook fired |
-| `receipt_lines` | `5` | Lines the receipt may spend on what was left; `0` for the old one-liner |
+| `receipt_lines` | `8` | Lines the receipt may add under the first; `0` for the old one-liner |
 | `language` | `en` | Language of everything a human reads |
 | `discovery.depth` | `2` | How far down projects are looked for (1-4). **Root only** |
 | `discovery.max_dirs` | `400` | Cap on directories examined per scan |
@@ -502,7 +511,7 @@ Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
 ./tests/run.sh
 ```
 
-321 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+328 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case

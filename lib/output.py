@@ -14,6 +14,9 @@ silence.
 from __future__ import annotations
 
 import json
+import os
+import re
+import textwrap
 import unicodedata
 from pathlib import Path
 
@@ -151,17 +154,63 @@ def index_block(root, cards, strings=None, truncated: bool = False) -> str:
 #: with its own "SessionStart:<source> says: " prefix, so this is a noise budget,
 #: not a space one: five lines is a glance, twenty is a wall -- which is why the
 #: config refuses anything past MAX_RECEIPT_LINES.
-DEFAULT_RECEIPT_LINES = 5
+DEFAULT_RECEIPT_LINES = 8
 MAX_RECEIPT_LINES = 20
 
-#: One receipt line. The model wraps its own prose, so this only stops a
-#: hand-edited monster line from taking over the terminal.
+#: Columns the receipt wraps to. The hook runs with no terminal -- no tty, no
+#: COLUMNS -- so this cannot be measured, only chosen: a comfortable measure
+#: that a narrow window soft-wraps once and loses nothing by it. COLUMNS is read
+#: anyway in case a future harness sets it.
+RECEIPT_WIDTH = 92
+
+#: Enough of a label to name a section. Unlike the items, a label that does not
+#: fit has nothing to lose by being cut: it is a heading, not a sentence.
 MAX_RECEIPT_LINE = 110
+
+#: A list marker the author wrote themselves. Kept as-is -- they numbered the
+#: questions so an answer could name one, and renumbering breaks "answer 2".
+RE_LIST_MARKER = re.compile(r"^\s*(?:[-*+\u2022]|\d{1,3}[.)])\s+")
+
+#: Emphasis markers render as literal asterisks in a terminal, so they are noise
+#: exactly where the text has to be scannable.
+RE_EMPHASIS = re.compile(r"\*\*|__")
 
 
 def _clip(text: str) -> str:
     text = " ".join(sanitize(text).split())
     return text if len(text) <= MAX_RECEIPT_LINE else text[:MAX_RECEIPT_LINE - 1] + "\u2026"
+
+
+def _width() -> int:
+    try:
+        columns = int(os.environ.get("COLUMNS", "0"))
+    except ValueError:
+        return RECEIPT_WIDTH
+    return columns - 4 if 60 <= columns <= 200 else RECEIPT_WIDTH
+
+
+def _item(text: str) -> list:
+    """One line of the document -> the display lines it takes.
+
+    Wrapping instead of cutting is not decoration. baton's whole argument is
+    that a handoff cut mid-sentence lies, and the first real use of the receipt
+    cut a question at a fixed column exactly where the decision was: "do I carry
+    on with the heavy one, do the four light ones fir...". The budget is spent in
+    whole items for the same reason the document is trimmed in whole lines.
+
+    The hanging indent is what makes the shape readable: the continuation of an
+    item sits under its text, so a new marker at the left margin is visibly a new
+    item and not more of the last one.
+    """
+    text = RE_EMPHASIS.sub("", " ".join(sanitize(text).split()))
+    if not text:
+        return []
+    found = RE_LIST_MARKER.match(text)
+    marker = text[found.start():found.end()].strip() + " " if found else "\u2022 "
+    body = text[found.end():] if found else text
+    width = max(_width() - len(marker), 24)
+    wrapped = textwrap.wrap(body, width=width) or [""]
+    return [marker + wrapped[0]] + [" " * len(marker) + line for line in wrapped[1:]]
 
 
 def _labels_everywhere() -> tuple:
@@ -218,6 +267,42 @@ def _what_was_left(sections: dict, mode: str):
     return chosen, left[chosen], [label for label in left if label != chosen]
 
 
+def _body(items, label, others, max_lines, r) -> list:
+    """Fit whole items into the line budget, and account for what did not.
+
+    The label owns a line and the tail owns another, so the shape is legible at a
+    glance: heading, items, then one line saying what is not here. Both are given
+    up when the budget is too small to afford them -- a receipt of two lines is
+    better spent on the content than on its furniture.
+    """
+    room = max_lines
+    head = []
+    if room >= 3:
+        head.append(r["section_label"].format(label=_clip(label)))
+        room -= 1
+    tail_slot = 1 if room >= 2 else 0
+    room -= tail_slot
+
+    shown, left_out = [], 0
+    for item in items:
+        if left_out or len(item) > room:
+            left_out += 1   # once one does not fit, the rest keep their order
+            continue
+        shown += item
+        room -= len(item)
+
+    parts = []
+    if left_out:
+        parts.append(r["tail_left_out"].format(n=left_out))
+    if others:
+        parts.append(r["tail_sections"].format(rest=", ".join(_clip(o) for o in others)))
+
+    out = head + [f"  {line}" for line in shown]
+    if parts and tail_slot:
+        out.append(r["tail"].format(parts=" \u00b7 ".join(parts)))
+    return out
+
+
 def receipt(document_text="", mode="", strings=None, cards=(), stale=False,
             max_lines=DEFAULT_RECEIPT_LINES, lines=0) -> str:
     """What baton puts in front of the HUMAN when a session starts.
@@ -244,16 +329,9 @@ def receipt(document_text="", mode="", strings=None, cards=(), stale=False,
         if max_lines > 0:
             sections = document.read_sections(document_text, s["context_section"])
             label, content, others = _what_was_left(sections, mode)
-            clipped = [_clip(line) for line in content.split("\n")]
-            shown = [line for line in clipped if line][:max_lines]
-            if shown:
-                # The label rides on the first line rather than owning one. Every
-                # line costs a repeated harness prefix, and a line that says only
-                # "Blockers:" buys nothing with it.
-                shown[0] = f"{_clip(label)}: {shown[0]}"
-                out += [f"  {line}" for line in shown]
-                if others:
-                    out.append(r["more"].format(rest=", ".join(_clip(o) for o in others)))
+            items = [lines for lines in (_item(line) for line in content.split("\n")) if lines]
+            if items:
+                out += _body(items, label, others, max_lines, r)
         if cards:
             out.append(r["also_projects"].format(n=len(cards)))
         return "\n".join(out)

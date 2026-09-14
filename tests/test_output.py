@@ -280,9 +280,61 @@ class TestReceipt(unittest.TestCase):
         self.assertNotIn("secret question", text)
         self.assertIn("baton", text)
 
-    def test_a_monster_line_cannot_take_over_the_terminal(self):
-        text = self.receipt("## State\nx\n\n## Blockers\n" + "y" * 900 + "\n")
-        self.assertTrue(all(len(l) < 200 for l in text.split("\n")), text[:300])
+    def test_no_line_takes_over_the_terminal(self):
+        text = self.receipt("## State\nx\n\n## Blockers\n" + "y " * 600 + "\n")
+        self.assertTrue(all(len(l) < 120 for l in text.split("\n")), text[:300])
+
+    # -- shape: a person has to see where one item ends and the next begins ---
+
+    def test_a_long_item_is_wrapped_whole_never_cut(self):
+        """baton's own argument, applied to its own output.
+
+        The receipt used to cut every line at a fixed column. In the first real
+        use that landed mid-question -- "do I carry on with the heavy one, do
+        the four light ones fir..." -- the exact half-sentence the product
+        exists to refuse.
+        """
+        tail = "and then decide whether the whole queue is worth it at all"
+        text = self.receipt("## State\nx\n\n## Blockers\n1. do I carry on with the heavy "
+                            "one, do the four light ones first to bring the queue down, "
+                            + tail + "?\n")
+        flat = " ".join(text.split())
+        self.assertIn(tail, flat)
+        self.assertNotIn("\u2026", text)
+
+    def test_a_wrapped_item_hangs_under_its_own_text(self):
+        text = self.receipt("## State\nx\n\n## Blockers\n1. " + "word " * 40 + "\n")
+        body = [l for l in text.split("\n") if "word" in l]
+        self.assertGreater(len(body), 1, "it did not wrap")
+        self.assertTrue(body[1].startswith("     "), repr(body[1][:12]))
+
+    def test_the_section_gets_a_line_of_its_own(self):
+        text = self.receipt("## State\nx\n\n## Blockers\n1. short one\n")
+        self.assertIn("Blockers", text.split("\n")[1])
+        self.assertNotIn("short one", text.split("\n")[1])
+
+    def test_an_item_with_no_marker_of_its_own_gets_a_bullet(self):
+        text = self.receipt("## State\nx\n\n## Blockers\nwaiting on the design review\n")
+        self.assertIn("\u2022 waiting on the design review", text)
+
+    def test_an_item_that_numbers_itself_keeps_its_number(self):
+        # The author numbered them so an answer can name one. Bulleting on top
+        # of that breaks "answer number 2".
+        text = self.receipt("## State\nx\n\n## Blockers\n2. the second one\n")
+        self.assertIn("2. the second one", text)
+        self.assertNotIn("\u2022 2.", text)
+
+    def test_emphasis_markers_are_not_shown_raw(self):
+        text = self.receipt("## State\nx\n\n## Blockers\n1. **the heavy one:** go or stop?\n")
+        self.assertNotIn("**", text)
+        self.assertIn("the heavy one:", text)
+
+    def test_items_that_do_not_fit_are_counted_not_cut(self):
+        body = "## State\nx\n\n## Blockers\n" + "".join(
+            f"{i}. " + "word " * 25 + "\n" for i in range(1, 6))
+        text = self.receipt(body, max_lines=6)
+        self.assertLessEqual(len(text.split("\n")), 1 + 6)
+        self.assertIn("3", text)
 
     def test_the_content_is_sanitized_like_everything_else(self):
         text = self.receipt("## State\nx\n\n## Blockers\nred\x1b[31m\x00 alert\n")

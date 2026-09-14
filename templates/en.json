@@ -87,7 +87,10 @@
   "receipt": {
     "handoff": "baton: handoff injected -- {mode} mode, {lines} lines, written {age}{extra}",
     "stale": ", and the code moved since",
-    "more": "  (not shown: {rest})",
+    "section_label": "  {label}",
+    "tail": "  ({parts})",
+    "tail_left_out": "{n} more not shown",
+    "tail_sections": "also in the document: {rest}",
     "projects": "baton: {n} project(s) available, none loaded:",
     "project_line": "  {name}  {mode} - {age}",
     "also_projects": "  (+ {n} project(s) in the index)"
