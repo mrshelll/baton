@@ -104,6 +104,13 @@ will re-ask it differently, and then "yes, but only if it is current" no longer
 says which one it answers. Number them if there are several, so an answer can
 name one. This is the one case where quoting yourself is worth the lines.
 
+**The first lines of these sections are what the person actually sees.** When the
+next session starts, baton prints the top of `Blockers` — or of `Next step`, or
+of `State`, whichever the document has — on the terminal, before anyone types
+anything. It is the only part of the handoff a human reads without asking for it.
+So put the thing that needs a decision on the first line of its section, not
+after three lines of preamble.
+
 What earns the budget:
 
 - **The why behind decisions.** The *what* is already in the code and in git; the

@@ -60,6 +60,7 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
     strings = output.load_strings(cfg["language"])
 
     index = ""
+    cards = []
     if found.projects:
         cards = [projects.describe(p, cfg["document"]) for p in found.projects]
         index = output.index_block(root, cards, strings, truncated=found.truncated)
@@ -69,8 +70,8 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
         payload = {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                           "additionalContext": index}}
         if cfg["receipt"]:
-            payload["systemMessage"] = (
-                f"baton: {len(found.projects)} project(s) available, none loaded")
+            payload["systemMessage"] = output.receipt(
+                strings=strings, cards=cards, max_lines=cfg["receipt_lines"])
         return payload, f"index injected: {len(found.projects)} projects"
 
     text = paths.document.read_text(encoding="utf-8", errors="replace")
@@ -98,12 +99,15 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
                                       "additionalContext": context}}
     if cfg["receipt"]:
         # The receipt is the cheapest way to turn a silent failure into a
-        # visible one: if this line is missing, the hook did not fire.
-        payload["systemMessage"] = (
-            f"baton: handoff injected -- {mode} mode, {len(context.splitlines())} lines"
-            + (", with a freshness notice" if notice else "")
-            + (f", plus {len(found.projects)} project(s) in the index" if index else "")
-        )
+        # visible one: if this line is missing, the hook did not fire. It also
+        # carries what the session left behind, because this is the ONLY thing
+        # baton shows the person: the handoff itself goes to the model and never
+        # to the screen, so without this the author of the document cannot see
+        # what they left without spending a turn asking for it back.
+        payload["systemMessage"] = output.receipt(
+            document_text=text, mode=mode, strings=strings, cards=cards,
+            stale=bool(notice), max_lines=cfg["receipt_lines"],
+            lines=len(context.splitlines()))
     return payload, f"injected {mode} mode"
 
 

@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-303-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-321-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -153,6 +153,40 @@ against git and says so:
 It also detects that the commit is gone (rebase or squash). **It never expires**:
 a project idle for two weeks doesn't invalidate its handoff, you just need to
 know it is old. And when there is nothing to say, it spends no lines.
+
+## What you see when a session starts
+
+The handoff goes to the model's context, which means it never reaches your
+screen. So baton prints what the session left behind, on the receipt line, before
+you type anything:
+
+```
+baton: handoff injected -- memory mode, 43 lines, written 2 d ago, and the code moved since
+  Blockers: 1. do I carry on with CR-RH-03b, do the four light ones first, or stop?
+  2. if they ever want to give someone access to only some venues, deciding later costs more
+  (not shown: State, Traps)
+```
+
+**It is extracted, never summarised.** baton writes no prose about your work: it
+takes the section verbatim and cuts on whole lines. Which section depends on what
+was left, because "what was left" is not always a question:
+
+| The document has | You see |
+|---|---|
+| Blockers, or questions nobody answered | those, first |
+| No blockers but a written next step | the next step |
+| Neither, just a state | the state, which always says what is still missing |
+| `continue` mode | the next step first, which is the point of the mode |
+| Several projects and none loaded | the list, with mode and age |
+
+The point is not the reading. It is that your first message stops being "let's
+carry on" and becomes the actual decision. That is a better instruction, and it
+is also what names the session in `/resume`: the name is generated from your
+first message, before any reply, and it is generated once.
+
+`receipt_lines` sets how much it may spend. The harness reprints every line with
+its own prefix, so this is a noise budget: `0` goes back to the single line that
+only proves the hook fired.
 
 ## Install
 
@@ -347,6 +381,7 @@ All optional. `~/.claude/baton.json` for your general preference,
   "inject_on": ["startup", "clear", "compact", "resume", "fork"],
   "cooldown_minutes": 30,
   "receipt": true,
+  "receipt_lines": 5,
   "language": "en",
   "discovery": { "depth": 2, "max_dirs": 400 }
 }
@@ -362,6 +397,7 @@ All optional. `~/.claude/baton.json` for your general preference,
 | `inject_on` | all five | Which session starts get the handoff |
 | `cooldown_minutes` | `30` | Minimum between automatic requests |
 | `receipt` | `true` | The line proving the hook fired |
+| `receipt_lines` | `5` | Lines the receipt may spend on what was left; `0` for the old one-liner |
 | `language` | `en` | Language of everything a human reads |
 | `discovery.depth` | `2` | How far down projects are looked for (1-4). **Root only** |
 | `discovery.max_dirs` | `400` | Cap on directories examined per scan |
@@ -396,16 +432,21 @@ unit tests had missed. They take two minutes.
 The startup line should read:
 
 ```
-SessionStart:startup says: baton: handoff injected -- memory mode, N lines
+SessionStart:startup says: baton: handoff injected -- memory mode, N lines, written ...
 ```
 
-No line means the hook did not fire. Run `doctor`.
+Under it you should see what was left: blockers, a next step, or the state. No
+line at all means the hook did not fire. Run `doctor`.
 
 **2. Memory mode — the one that defines the product.** With a `memory` handoff,
 open a fresh session and type something trivial and unrelated, like `hello`.
 
 - ✅ It greets in one line and waits.
 - ❌ It opens files, proposes a plan, or asks "shall we carry on with X?".
+
+Then type `let's carry on`. It must tell you what the document leaves open and
+ask which to take. "Context loaded, what do you want to do?" is the failure: you
+just said what you want.
 
 **3. The canary — proves the context reached the model, not just the file.** Put a
 line like `canary: xylophone-7731` in `## State`, then ask a fresh session *what
@@ -461,7 +502,7 @@ Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
 ./tests/run.sh
 ```
 
-303 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+321 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case

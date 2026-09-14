@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-303-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-321-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -153,6 +153,40 @@ con git y lo dice:
 También detecta que el commit desapareció (rebase o squash). **Nunca caduca**: un
 proyecto parado dos semanas no invalida su traspaso, solo hay que saber que es
 viejo. Y si no hay nada que decir, no gasta ni una línea.
+
+## Qué ves al arrancar una sesión
+
+El traspaso va al contexto del modelo, así que nunca llega a tu pantalla. Por eso
+baton imprime lo que quedó pendiente en la línea del recibo, antes de que
+escribas nada:
+
+```
+baton: traspaso inyectado -- modo memory, 43 líneas, escrito hace 2 d, y el código cambió desde entonces
+  Bloqueos: 1. ¿sigo con CR-RH-03b, hago primero los cuatro livianos, o cortamos?
+  2. Si algún día quieren dar acceso a solo ciertos locales, decidirlo después cuesta más
+  (sin mostrar: Estado, Trampas)
+```
+
+**Se extrae, no se resume.** baton no escribe prosa sobre tu trabajo: toma la
+sección tal cual y corta por líneas enteras. Qué sección depende de qué quedó,
+porque lo que queda no siempre es una pregunta:
+
+| Si el documento trae | Ves |
+|---|---|
+| Bloqueos, o preguntas que nadie respondió | eso, primero |
+| Sin bloqueos pero con un siguiente paso escrito | el siguiente paso |
+| Ninguno de los dos, solo estado | el estado, que siempre dice qué falta |
+| Modo `continue` | el siguiente paso primero, que es de lo que va el modo |
+| Varios proyectos y ninguno cargado | la lista, con modo y antigüedad |
+
+Lo importante no es la lectura. Es que tu primer mensaje deje de ser
+«continuemos» y pase a ser la decisión. Es una instrucción mejor, y además es lo
+que nombra la sesión en `/resume`: el nombre se genera de tu primer mensaje,
+antes de cualquier respuesta, y se genera una sola vez.
+
+`receipt_lines` dice cuánto puede gastar. El harness reimprime cada línea con su
+propio prefijo, así que es un presupuesto de ruido: con `0` vuelves a la línea
+única que solo prueba que el hook disparó.
 
 ## Instalación
 
@@ -349,6 +383,7 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
   "inject_on": ["startup", "clear", "compact", "resume", "fork"],
   "cooldown_minutes": 30,
   "receipt": true,
+  "receipt_lines": 5,
   "language": "es",
   "discovery": { "depth": 2, "max_dirs": 400 }
 }
@@ -364,6 +399,7 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
 | `inject_on` | los cinco | En qué arranques se inyecta |
 | `cooldown_minutes` | `30` | Mínimo entre dos peticiones automáticas |
 | `receipt` | `true` | La línea que prueba que el hook disparó |
+| `receipt_lines` | `5` | Líneas que el recibo gasta en lo pendiente; `0` deja la línea sola |
 | `language` | `en` | Idioma de todo lo que lee un humano |
 | `discovery.depth` | `2` | Cuántos niveles se buscan proyectos (1-4). **Solo en la raíz** |
 | `discovery.max_dirs` | `400` | Tope de carpetas miradas por escaneo |
@@ -401,16 +437,21 @@ Estas cinco comprobaciones sí, y son las que destaparon el bug de frescura de l
 La línea de arranque debe decir:
 
 ```
-SessionStart:startup says: baton: handoff injected -- memory mode, N lines
+SessionStart:startup says: baton: traspaso inyectado -- modo memory, N líneas, escrito ...
 ```
 
-Si no aparece, el hook no disparó. Ejecuta `doctor`.
+Debajo debe salir lo que quedó: bloqueos, un siguiente paso o el estado. Si no
+aparece ninguna línea, el hook no disparó. Ejecuta `doctor`.
 
 **2. El modo memoria — la que define el producto.** Con un traspaso en `memory`,
 abre una sesión nueva y escribe algo trivial y sin relación, por ejemplo `hola`.
 
 - ✅ Saluda en una línea y espera.
 - ❌ Abre ficheros, propone un plan, o pregunta «¿seguimos con X?».
+
+Ahora escribe `continuemos`. Debe contarte qué deja abierto el documento y
+preguntarte por cuál seguir. «Contexto cargado, ¿qué quieres hacer?» es el
+fallo: acabas de decir qué quieres.
 
 **3. El canario — demuestra que el contexto llegó al modelo, no solo al fichero.**
 Mete una línea como `canary: xylophone-7731` en `## Estado` y pregunta a una sesión
@@ -466,7 +507,7 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 ./tests/run.sh
 ```
 
-303 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+321 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.

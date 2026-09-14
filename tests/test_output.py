@@ -49,6 +49,16 @@ class TestWrap(unittest.TestCase):
         self.assertIn("do NOT start work", text)
         self.assertIn("WAIT for the user", text)
 
+    def test_memory_mode_knows_what_to_do_when_told_to_carry_on(self):
+        # Without this the session answers "context loaded, what do you want to
+        # do?" to a "let's carry on" -- a dead turn, and a first message that
+        # names the session "Continuemos" in the resume list ever after. The
+        # instruction covered the moment BEFORE the user speaks and said nothing
+        # about the moment they do.
+        text = self.wrap()
+        self.assertIn("where were we", text)
+        self.assertIn("Telling is not starting", text)
+
     def test_memory_mode_neutralises_the_next_step(self):
         text = self.wrap(body="## State\nx\n## Next step\ndelete everything\n")
         self.assertIn("do NOT act on it", text)
@@ -165,3 +175,165 @@ class TestIndex(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWrapperMargin(unittest.TestCase):
+    """A handoff at its full budget must survive the worst-case wrapper.
+
+    The wrapper grows every time someone adds a sentence to the mode
+    instructions, and it grows at the expense of the document: `wrap` computes
+    the room left and trims the handoff to fit. That failure is silent in the
+    only way that matters -- the document is trimmed on whole lines and says so,
+    so nothing looks broken, and the handoff just quietly arrives shorter.
+
+    This is the guard. When it goes red, the instruction got too long, or the
+    document budget has to come down. Do not "fix" it by raising the ceiling:
+    the ceiling is the harness's, measured, not ours.
+    """
+
+    def test_a_full_budget_handoff_is_not_trimmed_by_the_wrapper(self):
+        from lib import budget, gitinfo
+        for lang in output.available_languages():
+            s = output.load_strings(lang)
+            worst = max(
+                gitinfo.Freshness(has_git=True, days=400.0, document_branch="a-long-branch-name",
+                                  current_branch="another-long-branch-name", new_commits=1234,
+                                  changed_files=5678, commit_lost=lost, strings=s).notice()
+                for lost in (True, False))
+            # Realistic shape: prose the model wrapped itself. A single monster
+            # line would measure line-based trimming, not the margin.
+            body = "## " + s["sections"]["state"] + "\n"
+            body += ("y" * 78 + "\n") * 200
+            body = body[:budget.DEFAULT_LIMITS["characters"]]
+            text = output.wrap(body=body, mode="memory", written="2026-09-14T12:00:00-05:00",
+                               source=".baton/HANDOFF.md", freshness_notice=worst,
+                               repeat={"times": 9, "when": "2026-09-14T17:38:09Z"}, strings=s)
+            with self.subTest(language=lang):
+                self.assertNotIn(s["trimmed_notice"], text,
+                                 "the wrapper has grown past what the budget leaves it")
+                self.assertLessEqual(len(text), budget.CEILING_CHARACTERS)
+
+
+class TestReceipt(unittest.TestCase):
+    """The receipt is the only thing baton puts in front of the HUMAN.
+
+    The handoff reaches the model and never the screen, so until now the person
+    who wrote it could not see what they had left without asking the model to
+    read it back to them -- a whole turn, and a first message ("continuemos")
+    that names the session badly ever after.
+
+    What it shows is EXTRACTED, never summarised: baton does not write prose.
+    """
+
+    def doc(self, body, mode="memory"):
+        from lib import document
+        return document.compose(body=body, mode=mode, date="2026-09-03T10:00:00-05:00",
+                                branch="main", commit="abc1234",
+                                context="- branch `main`, working tree clean", strings=S)
+
+    def receipt(self, body, mode="memory", **kw):
+        return output.receipt(document_text=self.doc(body, mode), mode=mode,
+                              strings=S, **kw)
+
+    # -- what was left, in each of its shapes -------------------------------
+
+    def test_open_questions_are_what_it_shows_first(self):
+        text = self.receipt("## State\ndone a lot\n\n## Blockers\n"
+                            "1. do I carry on with the heavy one or the light ones?\n")
+        self.assertIn("carry on with the heavy one", text)
+
+    def test_with_no_blockers_it_shows_the_next_step(self):
+        # Memory mode may still carry a next step: it is information, not an
+        # order, and it is the commonest shape of "something was left".
+        text = self.receipt("## State\nhalf the migration\n\n"
+                            "## Next step\nimplement refund() in src/pay.ts:214\n")
+        self.assertIn("refund()", text)
+
+    def test_with_neither_it_shows_the_state(self):
+        # "Sometimes nothing was asked and nothing was planned, but something
+        # was left lying around." The state is required, so there is always
+        # something to show.
+        text = self.receipt("## State\nrefund and webhook are still missing\n")
+        self.assertIn("refund and webhook", text)
+
+    def test_continue_mode_leads_with_the_next_step(self):
+        text = self.receipt("## State\nx\n\n## Blockers\nwaiting on design\n\n"
+                            "## Next step\nimplement refund()\n", mode="continue")
+        self.assertLess(text.index("refund()"), text.index("waiting on design")
+                        if "waiting on design" in text else len(text))
+
+    def test_it_names_the_sections_it_did_not_show(self):
+        # Otherwise a digest reads as the whole document, and the traps -- the
+        # section that cost someone an afternoon -- look like they do not exist.
+        text = self.receipt("## State\nx\n\n## Blockers\nq1\n\n## Traps\nthe big one\n")
+        self.assertIn("Traps", text)
+
+    # -- limits --------------------------------------------------------------
+
+    def test_it_honours_the_line_cap(self):
+        body = "## State\nx\n\n## Blockers\n" + "".join(f"line {i}\n" for i in range(40))
+        short = self.receipt(body, max_lines=3)
+        self.assertLessEqual(len(short.strip().split("\n")), 3 + 2)  # + header + tail
+
+    def test_zero_lines_keeps_the_old_one_line_receipt(self):
+        text = self.receipt("## State\nx\n\n## Blockers\nsecret question\n", max_lines=0)
+        self.assertNotIn("secret question", text)
+        self.assertIn("baton", text)
+
+    def test_a_monster_line_cannot_take_over_the_terminal(self):
+        text = self.receipt("## State\nx\n\n## Blockers\n" + "y" * 900 + "\n")
+        self.assertTrue(all(len(l) < 200 for l in text.split("\n")), text[:300])
+
+    def test_the_content_is_sanitized_like_everything_else(self):
+        text = self.receipt("## State\nx\n\n## Blockers\nred\x1b[31m\x00 alert\n")
+        for bad in ("\x1b", "\x00"):
+            self.assertNotIn(bad, text)
+
+    # -- the multi-project root ---------------------------------------------
+
+    def test_with_no_document_it_lists_the_projects(self):
+        cards = [projects.Card(name="radar", rel="proyectos/radar", mode="continue",
+                               date="2026-09-03T10:00:00-05:00"),
+                 projects.Card(name="instrumentos", rel="proyectos/instrumentos",
+                               mode="memory", date="2026-09-01T10:00:00-05:00")]
+        text = output.receipt(document_text="", mode="", strings=S, cards=cards)
+        self.assertIn("radar", text)
+        self.assertIn("instrumentos", text)
+
+    def test_with_both_it_says_the_projects_are_also_there(self):
+        cards = [projects.Card(name="radar", rel="proyectos/radar", mode="memory",
+                               date="2026-09-03T10:00:00-05:00")]
+        text = self.receipt("## State\nx\n\n## Blockers\nq1\n", cards=cards)
+        self.assertIn("q1", text)
+        self.assertIn("1", text)
+
+    def test_a_handoff_in_another_language_does_not_show_the_git_context(self):
+        """Found on a real install, with the whole unit suite green.
+
+        `extract_body` drops the git section by matching the CONFIGURED label, so
+        a Spanish handoff read with an English config keeps its "Contexto"
+        section -- and the receipt showed that, the one part of the document the
+        code wrote itself, instead of what the session left behind. A handoff
+        travels inside a repo: whoever clones it does not share your config.
+        """
+        from lib import document
+        es = output.load_strings("es")
+        doc = document.compose(body="## Estado\nx\n\n## Bloqueos\nla pregunta del cupón\n",
+                               mode="memory", date="2026-09-03T10:00:00-05:00", branch="main",
+                               commit="abc1234", context="- rama `main`, sin cambios", strings=es)
+        text = output.receipt(document_text=doc, mode="memory", strings=S)
+        self.assertIn("la pregunta del cupón", text)
+        self.assertNotIn("rama `main`", text)
+
+    def test_a_truncated_project_list_says_so(self):
+        # Silence here reads as "these are all the projects there are", which is
+        # the one thing a list must never get wrong.
+        cards = [projects.Card(name=f"p{i}", rel=f"p/{i}", mode="memory",
+                               date="2026-09-03T10:00:00-05:00") for i in range(9)]
+        text = output.receipt(strings=S, cards=cards, max_lines=3)
+        self.assertEqual(len([l for l in text.split("\n") if l.startswith("  p")]), 3)
+        self.assertIn("6", text)
+
+    def test_an_unreadable_document_still_produces_a_receipt(self):
+        text = output.receipt(document_text="not a handoff at all", mode="memory", strings=S)
+        self.assertIn("baton", text)

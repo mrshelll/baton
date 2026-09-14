@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.4.5 — 2026-09-14
+
+Found by using it: open a session, type "let's carry on", and get back "context
+loaded, what do you want to do?". The mode was right and the document was there.
+
+### Added
+- **The receipt shows what the session left behind.** The handoff goes to the
+  model's context, so it never reaches the screen: the person who wrote it could
+  not see what they had left without spending a turn asking for it back. It is
+  extracted verbatim and cut on whole lines, never summarised, and which section
+  it shows depends on what was left — blockers or unanswered questions first, a
+  written next step if there are none, and otherwise the state, which always says
+  what is still missing. `continue` mode leads with the next step. A root with
+  several projects lists them with mode and age. New `receipt_lines` sets the
+  budget, `0` restores the old single line.
+
+  The second effect is the one that matters: the first message stops being "let's
+  carry on" and becomes the decision. That also names the session in `/resume`,
+  which is generated from the first message before any reply, and generated once
+  — so every session that opened with "let's carry on" was called exactly that.
+
+### Changed
+- **Memory mode now knows what to do when told to carry on.** The instruction
+  covered the moment before the user speaks and said nothing about the moment
+  they do, so a "let's carry on" was read as still not having said anything, and
+  the reply was another question. It now answers with what the document leaves
+  open and asks which to take. Telling is not starting: the mode still forbids
+  opening files and running commands.
+
+### Fixed
+- **A handoff in another language showed the git context as if it were the
+  work.** Found the way the last six were: running the hook against a folder
+  shaped like a real install, with the whole unit suite green. `extract_body`
+  drops the git section by matching the CONFIGURED label, so a Spanish
+  `## Contexto` survives an English session -- and the receipt showed the one
+  part of the document the code wrote itself. Section labels are now matched
+  across every installed language, which also means a Spanish `Bloqueos` is
+  still recognised as blockers by an English config. A handoff travels inside a
+  repo: whoever clones it does not share your config.
+- **A section holding only invisible characters won the pick and printed an
+  empty line**, hiding the section that actually had something in it. The
+  emptiness test now runs through the same sanitising pass the receipt prints
+  through, so what is tested and what is shown cannot disagree.
+- **A project list longer than the receipt was cut in silence**, which reads as
+  "these are all the projects there are".
+- **The wrapper could push a full-budget handoff past the harness ceiling**, and
+  the new paragraph above made it measurable: worst case — a handoff at 6,000
+  characters, 400 days old, on another branch, with 1,234 commits on top and a
+  repeat notice — left a deficit of 27 characters in Spanish. The handoff would
+  have been trimmed, on whole lines and declared, but trimmed. Both instructions
+  were tightened, and `tests/test_output.py` now pins the invariant so the next
+  sentence anyone adds fails the suite instead of quietly eating the document.
+
 ## 0.4.4 — 2026-09-04
 
 ### Changed

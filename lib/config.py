@@ -30,6 +30,10 @@ DEFAULTS = {
     "discovery": {"depth": projects.DEFAULT_DEPTH, "max_dirs": projects.DEFAULT_MAX_DIRS},
     # The one-line receipt proving the hook fired.
     "receipt": True,
+    # Content lines the receipt may spend showing what the session left behind.
+    # The harness reprints every line with its own prefix, so this is a noise
+    # budget: 0 goes back to the single line that only proves the hook fired.
+    "receipt_lines": output.DEFAULT_RECEIPT_LINES,
     # Language of everything a human reads: section headings, messages and the
     # instructions injected into the model. Config keys stay in English.
     "language": output.DEFAULT_LANGUAGE,
@@ -127,6 +131,13 @@ def _merge(base: dict, over: dict, path: Path, warnings: list) -> dict:
             else:
                 warnings.append(f"{path.name}: 'document' points outside the project; "
                                 f"using {DEFAULTS['document']}")
+        elif key == "receipt_lines":
+            if _valid_int(value, 0) and value <= output.MAX_RECEIPT_LINES:
+                out["receipt_lines"] = value
+            else:
+                warnings.append(
+                    f"{path.name}: 'receipt_lines' must be an integer between 0 and "
+                    f"{output.MAX_RECEIPT_LINES}; using {DEFAULTS['receipt_lines']}")
         elif key == "history_max":
             if _valid_int(value, 0):
                 out["history_max"] = value

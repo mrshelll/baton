@@ -86,6 +86,17 @@ def _disable_closing_tag(text: str, tag: str) -> str:
 MAX_NAME = 60
 
 
+def _name_column(cards):
+    """(names, width) for a project listing: cleaned, capped, ready to align.
+
+    The index and the receipt list the same projects in two different places.
+    The cap lives here once because a name capped on one side and not the other
+    is the same 300-character directory name blowing up whichever side forgot.
+    """
+    names = [sanitize(card.name)[:MAX_NAME] for card in cards]
+    return names, max((len(n) for n in names), default=0)
+
+
 def _age(date: str, strings: dict) -> str:
     from lib import gitinfo
     days = gitinfo.days_since(date)
@@ -109,8 +120,7 @@ def index_block(root, cards, strings=None, truncated: bool = False) -> str:
     i = s["index"]
     tag = i["tag"]
 
-    names = [sanitize(card.name)[:MAX_NAME] for card in cards]
-    width = max((len(n) for n in names), default=0)
+    names, width = _name_column(cards)
 
     # The disabling is applied to the lines and NOT to the finished block: the
     # names come from directories and are untrusted, but the block's own closing
@@ -135,6 +145,131 @@ def index_block(root, cards, strings=None, truncated: bool = False) -> str:
         body.append(i["and_more"].format(n=len(lines) - len(shown.rstrip("\n").split("\n"))))
 
     return "\n".join(head + body + tail)
+
+
+#: Content lines the receipt may spend. Every line is reprinted by the harness
+#: with its own "SessionStart:<source> says: " prefix, so this is a noise budget,
+#: not a space one: five lines is a glance, twenty is a wall -- which is why the
+#: config refuses anything past MAX_RECEIPT_LINES.
+DEFAULT_RECEIPT_LINES = 5
+MAX_RECEIPT_LINES = 20
+
+#: One receipt line. The model wraps its own prose, so this only stops a
+#: hand-edited monster line from taking over the terminal.
+MAX_RECEIPT_LINE = 110
+
+
+def _clip(text: str) -> str:
+    text = " ".join(sanitize(text).split())
+    return text if len(text) <= MAX_RECEIPT_LINE else text[:MAX_RECEIPT_LINE - 1] + "\u2026"
+
+
+def _labels_everywhere() -> tuple:
+    """({slug: {normalised label in every language}}, {labels of the git section}).
+
+    A handoff travels inside a repo, so the config that READS one is not
+    necessarily the config that wrote it. Matching only the configured labels
+    leaves a Spanish document unreadable to an English session: its git section
+    survives `extract_body` and gets shown as if it were the work, and its
+    `Bloqueos` stops being recognised as the blockers. Cheap to ask every
+    language; there are two.
+    """
+    by_slug: dict = {}
+    context = set()
+    for language in available_languages():
+        s = load_strings(language)
+        for slug, label in s["sections"].items():
+            by_slug.setdefault(slug, set()).add(document.normalize_label(label))
+        context.add(document.normalize_label(s["context_section"]))
+    return by_slug, context
+
+
+def _what_was_left(sections: dict, mode: str):
+    """(label, content, other labels) -- what the session left behind.
+
+    The order differs by mode because "what was left" means different things:
+    in continue mode the next step IS the leftover, and in memory mode what is
+    open is. And the leftover is not always a question -- most often it is a
+    step written down, or just a state that says what is still missing -- so
+    this falls through all three rather than looking for questions.
+    """
+    order = ("next", "blockers", "state") if mode == "continue" else ("blockers", "next", "state")
+    known, context_labels = _labels_everywhere()
+    left = {label: content for label, content in sections.items()
+            if document.normalize_label(label) not in context_labels}
+    # Only a section with something LEFT TO SHOW can be what was left behind:
+    # `_clip` is the same pass the receipt prints through, so a section that
+    # survives `strip` but vanishes under it does not get picked and then
+    # printed as a bare label with nothing after it.
+    by_norm = {document.normalize_label(label): label
+               for label, content in left.items() if _clip(content)}
+
+    chosen = None
+    for slug in order:
+        chosen = next((by_norm[n] for n in known.get(slug, ()) if n in by_norm), None)
+        if chosen is not None:
+            break
+    if chosen is None:
+        # A handoff written in another language, or hand-edited: show the first
+        # section there is. Showing something beats matching a label.
+        chosen = next(iter(by_norm.values()), None)
+    if chosen is None:
+        return "", "", []
+    return chosen, left[chosen], [label for label in left if label != chosen]
+
+
+def receipt(document_text="", mode="", strings=None, cards=(), stale=False,
+            max_lines=DEFAULT_RECEIPT_LINES, lines=0) -> str:
+    """What baton puts in front of the HUMAN when a session starts.
+
+    The handoff goes to the model's context and never to the screen, so whoever
+    wrote it could not see what they had left without spending a turn asking for
+    it back -- and that turn starts with "let's carry on", which is also what
+    names the session in the resume list ever after. This is the one channel
+    that reaches the person without a model turn.
+
+    It EXTRACTS, it does not summarise: baton never writes prose about the work.
+    """
+    s = strings or load_strings()
+    r = s["receipt"]
+    cards = list(cards)
+    out = []
+
+    if document_text:
+        fields = document.read_fields(document_text)
+        out.append(r["handoff"].format(
+            mode=mode, lines=lines or len(document_text.splitlines()),
+            age=_age(fields.get("date", ""), s),
+            extra=r["stale"] if stale else ""))
+        if max_lines > 0:
+            sections = document.read_sections(document_text, s["context_section"])
+            label, content, others = _what_was_left(sections, mode)
+            clipped = [_clip(line) for line in content.split("\n")]
+            shown = [line for line in clipped if line][:max_lines]
+            if shown:
+                # The label rides on the first line rather than owning one. Every
+                # line costs a repeated harness prefix, and a line that says only
+                # "Blockers:" buys nothing with it.
+                shown[0] = f"{_clip(label)}: {shown[0]}"
+                out += [f"  {line}" for line in shown]
+                if others:
+                    out.append(r["more"].format(rest=", ".join(_clip(o) for o in others)))
+        if cards:
+            out.append(r["also_projects"].format(n=len(cards)))
+        return "\n".join(out)
+
+    if cards:
+        out.append(r["projects"].format(n=len(cards)))
+        names, width = _name_column(cards)
+        for name, card in zip(names[:max_lines], cards):
+            out.append(r["project_line"].format(
+                name=_clip(name).ljust(width), mode=card.mode.ljust(8),
+                age=_age(card.date, s)))
+        if len(cards) > max_lines:
+            # Saying nothing here reads as "that is all of them", which is the
+            # one thing a list of what exists must never get wrong.
+            out.append(s["index"]["and_more"].format(n=len(cards) - max_lines))
+    return "\n".join(out)
 
 
 def wrap(body, mode, written, source, freshness_notice="", repeat=None,

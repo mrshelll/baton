@@ -207,6 +207,17 @@ def extract_body(text, context_section: str = "Context") -> str:
     return ""
 
 
+def read_sections(text, context_section: str = "Context") -> dict:
+    """Ordered {label: content} of what the MODEL wrote, git context aside.
+
+    `_split_sections` serves the draft validator, which works on a draft that has
+    no frontmatter and no git section. This one serves a finished document, and
+    exists so a reader does not have to know which of those two shapes it holds.
+    """
+    _, sections = _split_sections(extract_body(text, context_section))
+    return sections
+
+
 def fingerprint(text, context_section: str = "Context") -> str:
     """A handoff's identity: its body alone.
 

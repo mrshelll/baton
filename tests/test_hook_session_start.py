@@ -68,6 +68,22 @@ class TestInjection(Base):
         _, out, _ = self.start()
         self.assertIn("baton", out["systemMessage"])
 
+    def test_the_receipt_shows_what_the_session_left_behind(self):
+        # The handoff reaches the model and never the screen. This line is the
+        # only thing the person who wrote it actually sees.
+        self.write_handoff(body="## State\nx\n\n## Blockers\nthe coupon question\n")
+        _, out, _ = self.start()
+        self.assertIn("the coupon question", out["systemMessage"])
+
+    def test_the_receipt_can_be_reduced_to_one_line(self):
+        (self.project / ".claude").mkdir(exist_ok=True)
+        (self.project / ".claude" / "baton.json").write_text(
+            '{"receipt_lines": 0}', encoding="utf-8")
+        self.write_handoff(body="## State\nx\n\n## Blockers\nthe coupon question\n")
+        _, out, _ = self.start()
+        self.assertNotIn("the coupon question", out["systemMessage"])
+        self.assertIn("baton", out["systemMessage"])
+
     def test_never_exceeds_the_harness_ceiling(self):
         self.write_handoff(body="## State\n" + "a long filler line\n" * 500)
         text = self.context(self.start()[1])
