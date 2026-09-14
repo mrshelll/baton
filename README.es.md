@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-328-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-330-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -64,8 +64,11 @@ flowchart LR
 - **Se reescribe entero, nunca se añade.** Un fichero, sin entradas apiladas.
 - **Presupuesto duro verificado por código**: 120 líneas / 6.000 caracteres,
   derivados hacia atrás desde el techo real del harness. Si no cabe, el comando
-  **falla y obliga a recortar** — no trunca a media frase, porque un traspaso
-  cortado miente.
+  **falla y dice qué sección sobra** — no trunca a media frase, porque un traspaso
+  cortado miente. Al tercer intento fallido baton escribe él un traspaso mínimo,
+  conserva la sección obligatoria y declara el recorte dentro del documento: un
+  corte que lo dice vale más que un modelo dando vueltas sobre un presupuesto que
+  no consigue cumplir.
 - **Secciones opcionales de verdad.** Si no hay bloqueos, la sección *no existe*.
   Nada de «Bloqueos: ninguno»: los huecos son por donde engordan los demás.
 - **Los datos de git los pone el código**, no el modelo: rama, commit, ficheros sin
@@ -93,6 +96,10 @@ flowchart TD
 | Cuándo | Hay tarea a medias | Hay progreso, nada que continuar |
 | Exige `Siguiente paso` | Sí, el código lo verifica | No |
 | La sesión nueva | Confirma y empieza | Saluda y **espera** |
+
+Esperar no es callar. Dile *continuemos* o *en qué quedamos* y una sesión en
+`memory` te cuenta qué deja abierto el documento y te pregunta por cuál seguir,
+sin abrir un fichero, porque contar no es empezar.
 
 Ante cualquier ambigüedad —frontmatter roto, documento corrupto, versión
 desconocida— baton cae a `memory`. Un documento ilegible nunca puede autorizar a
@@ -154,6 +161,10 @@ También detecta que el commit desapareció (rebase o squash). **Nunca caduca**:
 proyecto parado dos semanas no invalida su traspaso, solo hay que saber que es
 viejo. Y si no hay nada que decir, no gasta ni una línea.
 
+**También avisa cuando se repite.** Un traspaso que llega a una sesión que ya lo
+recibió viene con la cuenta y la fecha de la última vez. El trabajo que no ha
+avanzado no es novedad, y sin esa línea la sesión nueva lo lee como si lo fuera.
+
 ## Qué ves al arrancar una sesión
 
 El traspaso va al contexto del modelo, así que nunca llega a tu pantalla. Por eso
@@ -194,8 +205,15 @@ Lo importante no es la lectura. Es que tu primer mensaje deje de ser
 que nombra la sesión en `/resume`: el nombre se genera de tu primer mensaje,
 antes de cualquier respuesta, y se genera una sola vez.
 
-`receipt_lines` dice cuántas líneas puede añadir bajo la primera. Con `0` vuelves
-a la línea única que solo prueba que el hook disparó.
+`receipt_lines` dice cuántas líneas puede añadir bajo la primera. Es un tope, no
+un objetivo: un traspaso con una sola cosa pendiente gasta dos líneas diga lo que
+diga el tope. Con `0` queda solo la primera línea.
+
+Las líneas se envuelven a una medida legible, nunca al ancho completo de la
+ventana. Un terminal ancho lleno de borde a borde se lee peor, y una línea medida
+contra él se sale de la sangría en la que el harness la imprime — y entonces el
+terminal parte el resto contra la columna cero, debajo de nada, deshaciendo la
+estructura.
 
 ## Instalación
 
@@ -232,6 +250,9 @@ Y para inspeccionar:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" show      # resumen y coste
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor    # por qué no funciona
 ```
+
+`context`, `write` y `load` completan la CLI, y quien los ejecuta es el skill:
+son los pasos de un `/baton`, no otra forma de usarlo.
 
 ## Cómo se ve un traspaso
 
@@ -328,7 +349,7 @@ flowchart TD
     S["Arranca la sesión en una carpeta"] --> D{"¿La raíz tiene<br/>traspaso propio?"}
     D -->|sí| P{"¿Hay subproyectos<br/>con traspaso?"}
     D -->|no| Q{"¿Hay subproyectos<br/>con traspaso?"}
-    P -->|no| A["el traspaso<br/><i>igual que siempre</i>"]
+    P -->|no| A["el traspaso,<br/><i>y nada más</i>"]
     P -->|sí| B["el traspaso y luego el índice"]
     Q -->|sí| C["solo el índice"]
     Q -->|no| E["silencio: aquí no se usa baton"]
@@ -392,7 +413,7 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
   "inject_on": ["startup", "clear", "compact", "resume", "fork"],
   "cooldown_minutes": 30,
   "receipt": true,
-  "receipt_lines": 8,
+  "receipt_lines": 12,
   "language": "es",
   "discovery": { "depth": 2, "max_dirs": 400 }
 }
@@ -407,8 +428,8 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
 | `history_max` | `10` | Versiones previas guardadas; `0` desactiva |
 | `inject_on` | los cinco | En qué arranques se inyecta |
 | `cooldown_minutes` | `30` | Mínimo entre dos peticiones automáticas |
-| `receipt` | `true` | La línea que prueba que el hook disparó |
-| `receipt_lines` | `8` | Líneas que el recibo añade bajo la primera; `0` deja la línea sola |
+| `receipt` | `true` | Si baton imprime algo en pantalla al arrancar la sesión |
+| `receipt_lines` | `12` | Líneas que el recibo añade bajo la primera; `0` deja solo la primera |
 | `language` | `en` | Idioma de todo lo que lee un humano |
 | `discovery.depth` | `2` | Cuántos niveles se buscan proyectos (1-4). **Solo en la raíz** |
 | `discovery.max_dirs` | `400` | Tope de carpetas miradas por escaneo |
@@ -496,7 +517,7 @@ una línea si el traspaso es de `a` o de la raíz, y escribir en
 
 Un hook que no dispara no da error: no da nada. Por eso hay cuatro capas:
 
-1. **El recibo** — una línea al inyectar. Si no la ves, no disparó.
+1. **El recibo** — su primera línea al inyectar. Si no la ves, no disparó.
 2. **La bitácora** (`.baton/local/log.jsonl`) — es lo único que distingue *«no
    disparó»* de *«disparó y calló porque no había documento»*: idénticos desde
    fuera, con causas opuestas.
@@ -516,7 +537,7 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 ./tests/run.sh
 ```
 
-328 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+330 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.

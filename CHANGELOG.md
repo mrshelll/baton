@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.7 — 2026-09-14
+
+### Fixed
+- **A wide terminal broke the shape the wrapping exists to build.** The hook does
+  get `COLUMNS` on a real install — a local subprocess does not, which is why
+  0.4.6 measured this wrong — so the lines grew to fill a 160-column window,
+  overflowed the indent the harness prints them inside, and the TERMINAL wrapped
+  the remainder to column zero, under nothing. The last word of a question
+  appeared to be a heading of its own. The terminal's width can now only ever
+  narrow the measure, never widen it past what is comfortable to read.
+
+### Changed
+- `receipt_lines` defaults to 12. It is a cap and not a target — a handoff with
+  one thing left in it spends two lines whatever the cap says — so the old 8 cost
+  nothing on a quiet handoff and, on a loud one, let a single verbose item crowd
+  out the two questions behind it.
+
+### Documentation
+- Both READMEs describe what baton does rather than what changed in it: the
+  repeat notice on a handoff delivered twice, and the minimal handoff baton
+  writes itself after three failed attempts, were features with no documentation
+  at all. A diagram that compared a case with "exactly as before", a config row
+  that called a behaviour "the old one-liner", and a layer described as "one line
+  on injection" when it is now a block, all named a past release instead of the
+  present behaviour.
+
 ## 0.4.6 — 2026-09-14
 
 0.4.5 shipped on a premise read off the binary and never checked against a real

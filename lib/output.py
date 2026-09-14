@@ -150,18 +150,25 @@ def index_block(root, cards, strings=None, truncated: bool = False) -> str:
     return "\n".join(head + body + tail)
 
 
-#: Content lines the receipt may spend. Every line is reprinted by the harness
-#: with its own "SessionStart:<source> says: " prefix, so this is a noise budget,
-#: not a space one: five lines is a glance, twenty is a wall -- which is why the
-#: config refuses anything past MAX_RECEIPT_LINES.
-DEFAULT_RECEIPT_LINES = 8
+#: Lines the receipt may add under its first one. A CAP, not a target: a handoff
+#: with one thing left in it spends two lines whatever this says, so a generous
+#: cap costs nothing on the quiet days and buys the difference on the loud ones,
+#: where the alternative is one verbose item crowding out the questions behind
+#: it. The config refuses anything past MAX_RECEIPT_LINES.
+DEFAULT_RECEIPT_LINES = 12
 MAX_RECEIPT_LINES = 20
 
-#: Columns the receipt wraps to. The hook runs with no terminal -- no tty, no
-#: COLUMNS -- so this cannot be measured, only chosen: a comfortable measure
-#: that a narrow window soft-wraps once and loses nothing by it. COLUMNS is read
-#: anyway in case a future harness sets it.
-RECEIPT_WIDTH = 92
+#: Columns the receipt wraps to, and a ceiling rather than a target. A receipt is
+#: read at a glance and a 150-column line is not, so a wide terminal buys nothing
+#: by being filled -- and costs something real: these lines are printed inside an
+#: indent the harness adds, so a line measured against the full width overflows
+#: it and the TERMINAL wraps the remainder to column zero, under nothing. That is
+#: the structure the wrapping exists to build, undone by the wrapping itself.
+RECEIPT_WIDTH = 88
+
+#: Room the harness's own indent takes, plus the two columns the receipt adds,
+#: plus slack. Subtracted before comparing against COLUMNS.
+RECEIPT_MARGIN = 10
 
 #: Enough of a label to name a section. Unlike the items, a label that does not
 #: fit has nothing to lose by being cut: it is a heading, not a sentence.
@@ -182,11 +189,14 @@ def _clip(text: str) -> str:
 
 
 def _width() -> int:
+    """The measure to wrap to. The terminal can only ever narrow it."""
     try:
         columns = int(os.environ.get("COLUMNS", "0"))
-    except ValueError:
+    except (TypeError, ValueError):
         return RECEIPT_WIDTH
-    return columns - 4 if 60 <= columns <= 200 else RECEIPT_WIDTH
+    if columns < 40:
+        return RECEIPT_WIDTH      # unset, or too small to be believed
+    return max(min(RECEIPT_WIDTH, columns - RECEIPT_MARGIN), 24)
 
 
 def _item(text: str) -> list:

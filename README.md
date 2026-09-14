@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-328-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-330-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -64,8 +64,10 @@ flowchart LR
 - **Rewritten whole, never appended to.** One file, no stacked entries.
 - **A hard budget enforced by code**: 120 lines / 6,000 characters, derived
   backwards from the harness's real ceiling. If it doesn't fit, the command
-  **fails and forces a trim** — it never cuts mid-sentence, because a truncated
-  handoff lies.
+  **fails and names the section to cut** — it never cuts mid-sentence, because a
+  truncated handoff lies. On the third failed attempt baton writes a minimal
+  handoff itself, keeping the required section and declaring the trim inside the
+  document: a cut that says so beats a model looping on a budget it cannot meet.
 - **Genuinely optional sections.** No blockers? The section *doesn't exist*. No
   "Blockers: none": empty sections are where the others put on weight.
 - **Git facts come from the code**, not the model: branch, commit, uncommitted
@@ -93,6 +95,10 @@ flowchart TD
 | When | A task is half done | Progress made, nothing to continue |
 | Requires `Next step` | Yes, the code enforces it | No |
 | The new session | Confirms and starts | Greets and **waits** |
+
+Waiting is not silence. Say *let's carry on* or *where were we* and a `memory`
+session tells you what the document leaves open and asks which to take — without
+opening a file, because telling is not starting.
 
 On any ambiguity — broken frontmatter, corrupt document, unknown version — baton
 falls back to `memory`. An unreadable document can never authorise continuing
@@ -154,6 +160,11 @@ It also detects that the commit is gone (rebase or squash). **It never expires**
 a project idle for two weeks doesn't invalidate its handoff, you just need to
 know it is old. And when there is nothing to say, it spends no lines.
 
+**It also says when it is repeating itself.** A handoff that reaches a session
+which already received it arrives with the count and the date of the last time.
+Work that has not moved is not news, and without that line the new session reads
+it as though it were.
+
 ## What you see when a session starts
 
 The handoff goes to the model's context, which means it never reaches your
@@ -194,8 +205,15 @@ carry on" and becomes the actual decision. That is a better instruction, and it
 is also what names the session in `/resume`: the name is generated from your
 first message, before any reply, and it is generated once.
 
-`receipt_lines` sets how many lines it may add under the first one. `0` goes back
-to the single line that only proves the hook fired.
+`receipt_lines` sets how many lines it may add under the first one. It is a cap,
+not a target: a handoff with one thing left in it spends two lines whatever the
+cap says. Set `0` for the first line alone.
+
+Lines are wrapped to a readable measure, never to the full width of the window.
+A wide terminal filled edge to edge is harder to read, and a line measured
+against it overflows the indent the harness prints it inside — at which point
+the terminal wraps the remainder to column zero, under nothing, undoing the
+structure.
 
 ## Install
 
@@ -232,6 +250,9 @@ And to inspect:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" show      # summary and cost
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor    # why it isn't working
 ```
+
+`context`, `write` and `load` complete the CLI, and the skill is what runs them:
+they are the steps of a `/baton`, not a second way to use it.
 
 ## What a handoff looks like
 
@@ -327,7 +348,7 @@ flowchart TD
     S["Session starts at a folder"] --> D{"Root has its<br/>own handoff?"}
     D -->|yes| P{"Subprojects<br/>with a handoff?"}
     D -->|no| Q{"Subprojects<br/>with a handoff?"}
-    P -->|no| A["the handoff<br/><i>exactly as before</i>"]
+    P -->|no| A["the handoff,<br/><i>and nothing else</i>"]
     P -->|yes| B["the handoff, then the index"]
     Q -->|yes| C["the index only"]
     Q -->|no| E["silence: baton is not used here"]
@@ -390,7 +411,7 @@ All optional. `~/.claude/baton.json` for your general preference,
   "inject_on": ["startup", "clear", "compact", "resume", "fork"],
   "cooldown_minutes": 30,
   "receipt": true,
-  "receipt_lines": 8,
+  "receipt_lines": 12,
   "language": "en",
   "discovery": { "depth": 2, "max_dirs": 400 }
 }
@@ -405,8 +426,8 @@ All optional. `~/.claude/baton.json` for your general preference,
 | `history_max` | `10` | Previous versions kept; `0` disables |
 | `inject_on` | all five | Which session starts get the handoff |
 | `cooldown_minutes` | `30` | Minimum between automatic requests |
-| `receipt` | `true` | The line proving the hook fired |
-| `receipt_lines` | `8` | Lines the receipt may add under the first; `0` for the old one-liner |
+| `receipt` | `true` | Whether baton prints anything on screen at session start |
+| `receipt_lines` | `12` | Lines the receipt may add under the first; `0` for the first line alone |
 | `language` | `en` | Language of everything a human reads |
 | `discovery.depth` | `2` | How far down projects are looked for (1-4). **Root only** |
 | `discovery.max_dirs` | `400` | Cap on directories examined per scan |
@@ -491,7 +512,7 @@ whether the handoff belongs to `a` or to the root, and write to
 
 A hook that doesn't fire gives no error: it gives nothing. Hence four layers:
 
-1. **The receipt** — one line on injection. No line, no fire.
+1. **The receipt** — its first line on injection. No line, no fire.
 2. **The log** (`.baton/local/log.jsonl`) — the only thing telling *"didn't fire"*
    apart from *"fired and stayed quiet because there was no document"*: identical
    from outside, opposite causes.
@@ -511,7 +532,7 @@ Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
 ./tests/run.sh
 ```
 
-328 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+330 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case

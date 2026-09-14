@@ -280,6 +280,36 @@ class TestReceipt(unittest.TestCase):
         self.assertNotIn("secret question", text)
         self.assertIn("baton", text)
 
+    def test_a_wide_terminal_does_not_widen_the_lines(self):
+        """Found on a real install: `COLUMNS` was set and the lines grew to fill
+        it, so each one overflowed the indent the harness adds and the TERMINAL
+        wrapped it -- dumping the remainder at column zero, under nothing, which
+        is exactly the structure the wrapping exists to create. A receipt is read
+        at a glance and a 150-column line is not, so the terminal's width can
+        only ever narrow it.
+        """
+        import os
+        old = os.environ.get("COLUMNS")
+        os.environ["COLUMNS"] = "200"
+        try:
+            text = self.receipt("## State\nx\n\n## Blockers\n1. " + "word " * 60 + "\n")
+        finally:
+            os.environ.pop("COLUMNS") if old is None else os.environ.__setitem__("COLUMNS", old)
+        # + the two columns the receipt indents its block by
+        self.assertTrue(all(len(line) <= output.RECEIPT_WIDTH + 2 for line in text.split("\n")),
+                        max(text.split("\n"), key=len))
+
+    def test_a_narrow_terminal_does_narrow_them(self):
+        import os
+        old = os.environ.get("COLUMNS")
+        os.environ["COLUMNS"] = "60"
+        try:
+            text = self.receipt("## State\nx\n\n## Blockers\n1. " + "word " * 20 + "\n")
+        finally:
+            os.environ.pop("COLUMNS") if old is None else os.environ.__setitem__("COLUMNS", old)
+        body = [line for line in text.split("\n") if "word" in line]
+        self.assertTrue(all(len(line) <= 60 for line in body), max(body, key=len))
+
     def test_no_line_takes_over_the_terminal(self):
         text = self.receipt("## State\nx\n\n## Blockers\n" + "y " * 600 + "\n")
         self.assertTrue(all(len(l) < 120 for l in text.split("\n")), text[:300])
