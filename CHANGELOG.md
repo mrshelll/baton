@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1 — 2026-09-25
+
+### Fixed
+- **After a turn that read images, the context was read blind.** baton looked
+  for the latest answer in the last 256 KB of the transcript, and an image read
+  leaves its result there as a single line of up to 1.4 MB: the answer sat just
+  before it, out of reach, and baton logged "context unknown" and stayed quiet.
+  The ask was delayed, not lost — a blind turn does not consume the threshold —
+  but across 237 real transcripts it happened at 1.3% of the moments a hook
+  runs, all of them in sessions that read screenshots. When the tail holds no
+  answer it now grows four times over, up to 16 MB; the farthest answer seen was
+  2 MB back. What is read is still parsed in memory for the same three numbers.
+
 ## 0.5.0 — 2026-09-25
 
 Until now baton wrote the handoff when asked, or right after a compaction. By

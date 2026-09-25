@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-439-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-440-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -531,14 +531,15 @@ baton treats it as untrusted input:
   faking another mode changes nothing.
 
 **baton reads the session transcript.** To know how full the window is, the hooks
-that run at the end of a turn and after a batch of tools read the last 256 KB of
-the transcript Claude Code keeps for the session (`transcript_path`), and its
-first 1 MB when the model's identity is not in the tail. The lines are parsed in
-memory to find three numbers — the input counters of the latest answer — and the
-model id. Nothing the conversation says is kept, logged or sent anywhere: what
-reaches the disk is a token count per model in `.baton/local/window.json`. The
-format is Claude Code's internal one and it will change; when baton does not
-understand it, it stays quiet rather than guess.
+that run at the end of a turn and after a batch of tools read the end of the
+transcript Claude Code keeps for the session (`transcript_path`): the last 256 KB,
+and up to 16 MB when a few large tool results — images read, say — fill that on
+their own. They also read its first 1 MB when the model's identity is not in the
+tail. The lines are parsed in memory to find three numbers — the input counters
+of the latest answer — and the model id. Nothing the conversation says is kept,
+logged or sent anywhere: what reaches the disk is a token count per model in
+`.baton/local/window.json`. The format is Claude Code's internal one and it will
+change; when baton does not understand it, it stays quiet rather than guess.
 
 ## Checking your install actually works
 
@@ -645,7 +646,7 @@ Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
 ./tests/run.sh
 ```
 
-439 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+440 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case

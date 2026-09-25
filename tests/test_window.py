@@ -105,12 +105,21 @@ class TestReadUsage(BaseCase):
         path = self.transcript(filler + [self.answer(90_000), huge])
         self.assertEqual(window.read_usage(path).tokens, 90_000)
 
-    def test_only_the_tail_is_read(self):
-        # A limitation on purpose: an answer far from the end means nothing
+    def test_an_answer_behind_results_bigger_than_the_tail_is_found(self):
+        # Real case: a turn that read images. Each result is one line of up to
+        # 1.4 MB, more than the whole first read, and a batch of them sits
+        # between the answer and the end -- 44 Stops of one session read blind.
+        image = {"type": "user", "toolUseResult": "x" * 1_400_000}
+        path = self.transcript([self.answer(90_000)] + [image] * 3)
+        self.assertEqual(window.read_usage(path).tokens, 90_000)
+
+    def test_the_tail_stops_growing_at_its_cap(self):
+        # A limitation on purpose: an answer that far from the end means nothing
         # happened lately, and reading 40 MB on every turn is the cost avoided.
         filler = [{"type": "user", "pad": "y" * 1000}] * 20
         path = self.transcript([self.answer(90_000)] + filler)
-        with mock.patch.object(window, "TAIL_BYTES", 4096):
+        with mock.patch.object(window, "TAIL_BYTES", 4096), \
+                mock.patch.object(window, "MAX_TAIL_BYTES", 16_384):
             self.assertIsNone(window.read_usage(path))
 
     def test_the_identity_names_the_window_the_answer_does_not(self):

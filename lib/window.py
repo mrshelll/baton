@@ -12,7 +12,7 @@ Two rules, the same ones as `storage`:
    internal format and WILL change; when this module does not understand what
    it reads, it answers "I do not know" and baton stays quiet.
 2. Only the tail of the file is read. A transcript reaches tens of MB and this
-   runs at the end of every turn.
+   runs at the end of every turn. The tail grows only when it holds no answer.
 
 The reading is one answer behind, always. Claude Code writes the transcript a
 step after its hooks run -- observed in a real session: when the tool hooks
@@ -32,9 +32,15 @@ from pathlib import Path
 
 from lib import storage
 
-#: Bytes read from the end of the transcript. The newest answer sat at most
-#: 108 KB from the end across 146 real transcripts; this leaves room for more.
+#: Bytes read first from the end of the transcript. Across 237 real
+#: transcripts, the newest answer sat within this at 98.7% of the moments a hook
+#: runs; the rest were turns that read images.
 TAIL_BYTES = 262_144
+
+#: When the first read holds no answer, it grows four times over, up to this.
+#: An image read leaves a tool result of up to 1.4 MB as ONE line after the
+#: answer; the farthest answer seen was 2 MB back.
+MAX_TAIL_BYTES = 16_777_216
 
 #: Bytes read from the start, only to find the model identity when the tail has
 #: none: Claude Code records it once, near the top.
@@ -129,6 +135,9 @@ UNKNOWN = Reading(known=False)
 def _chunks(path):
     """Lines from the tail and, when the file is longer than that, from the head.
 
+    The tail grows while it holds no answer: a few image results can fill the
+    first read on their own, and the answer is right before them.
+
     The line cut in half at each seam needs no special care: the piece of a JSONL
     line is never valid JSON -- it always lacks the outer object's other brace --
     so it fails to parse and is skipped like any other garbage.
@@ -140,15 +149,20 @@ def _chunks(path):
         return [], []
     try:
         with open(path, "rb") as fh:
-            fh.seek(0, os.SEEK_END)
-            start = max(0, fh.tell() - TAIL_BYTES)
-            fh.seek(start)
-            tail = fh.read()
+            end = fh.seek(0, os.SEEK_END)
+            size = TAIL_BYTES
+            while True:
+                start = max(0, end - size)
+                fh.seek(start)
+                tail = fh.read().split(b"\n")
+                if start == 0 or size >= MAX_TAIL_BYTES or _answer(tail) is not None:
+                    break
+                size = min(4 * size, MAX_TAIL_BYTES)
             fh.seek(0)
             head = fh.read(min(HEAD_BYTES, start))
     except (OSError, ValueError):
         return [], []
-    return tail.split(b"\n"), head.split(b"\n")
+    return tail, head.split(b"\n")
 
 
 def _entries(lines, marker: bytes):

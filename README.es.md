@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-439-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-440-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -535,10 +535,12 @@ entrada no confiable:
 
 **baton lee el transcript de la sesión.** Para saber cuánto se ha llenado la
 ventana, los hooks que corren al terminar un turno y tras un lote de herramientas
-leen los últimos 256 KB del transcript que Claude Code guarda de la sesión
-(`transcript_path`), y su primer 1 MB cuando la identidad del modelo no está en la
-cola. Las líneas se interpretan en memoria para sacar tres números —los contadores
-de entrada de la última respuesta— y el id del modelo. Nada de lo que dice la
+leen el final del transcript que Claude Code guarda de la sesión
+(`transcript_path`): los últimos 256 KB, y hasta 16 MB cuando unos pocos resultados
+de herramienta grandes —imágenes leídas, por ejemplo— los llenan por sí solos.
+También leen su primer 1 MB cuando la identidad del modelo no está en la cola. Las
+líneas se interpretan en memoria para sacar tres números —los contadores de
+entrada de la última respuesta— y el id del modelo. Nada de lo que dice la
 conversación se guarda, se registra ni se envía a ningún sitio: lo que llega al
 disco es un recuento de tokens por modelo en `.baton/local/window.json`. El formato
 es el interno de Claude Code y va a cambiar; cuando baton no lo entienda, se calla
@@ -649,7 +651,7 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 ./tests/run.sh
 ```
 
-439 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+440 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.
