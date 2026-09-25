@@ -108,5 +108,15 @@
     "unknown_project": "baton: ningún proyecto coincide con '{name}'. Pásale a --project uno de estos (basta el nombre de la carpeta):",
     "loaded": "baton: `{name}` es ahora el proyecto activo de esta sesión.",
     "no_handoff_yet": "baton: `{name}` todavía no tiene traspaso ({path})."
+  },
+  "auto_handoff": {
+    "reason": "baton: esta sesión ha consumido cerca del {percent}% de su ventana de contexto ({used} de {budget} tokens) y ahora mismo no hay nada en marcha. Poner el traspaso al día aquí, con la conversación todavía entera, es mejor que dejar que el harness la compacte y decida por ti qué sobrevive.\n\n{project}{again}{action}",
+    "project": "El proyecto activo de esta sesión es `{label}`; el traspaso va ahí, y los comandos de baton ya apuntan a él.\n\n",
+    "again": "Si ya se escribió un traspaso antes en esta sesión, reescríbelo ENTERO: ha envejecido, y lo que dice del estado del trabajo probablemente ya no es cierto.\n\n",
+    "ask": "NO escribas nada todavía. Pregunta al usuario en UNA línea si pausa aquí y escribe el traspaso, para seguir en una sesión nueva; por ejemplo: \"Vamos por el {percent}% del contexto: ¿escribo el traspaso ahora para que sigas en una sesión nueva?\". Si dice que sí, escríbelo siguiendo el skill `baton`. Si dice que no, sigue con lo que estabas haciendo: baton no volverá a preguntar en este umbral.",
+    "write": "Escribe el traspaso ahora siguiendo el skill `baton`: pide el contexto con `baton.py context`, redacta SOLO el cuerpo en el fichero de borrador y escríbelo con `baton.py write --mode <memory|continue>`. Después dile al usuario en una línea que el traspaso está escrito y que es buen momento para seguir en una sesión nueva.",
+    "watch": "baton: esta sesión ha consumido cerca del {percent}% de su ventana de contexto. No empieces una tarea nueva a partir de aquí: termina la que está en curso. baton ofrecerá pronto escribir el traspaso para seguir en una sesión nueva.",
+    "notice_ask": "baton: contexto al {percent}% -- Claude te preguntará si escribe el traspaso.",
+    "notice_write": "baton: contexto al {percent}% -- Claude está escribiendo el traspaso."
   }
 }

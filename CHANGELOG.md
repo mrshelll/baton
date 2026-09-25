@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.5.0 — 2026-09-25
+
+Until now baton wrote the handoff when asked, or right after a compaction. By
+then it was late: a compaction is the harness deciding by itself what survives of
+the conversation, and it decides when the window is full, not when you are ready
+to stop. This release gets there first.
+
+### Added
+- **The handoff is asked for when the context window fills up.** At 60% the
+  model is told once, after a batch of tools, not to start a new task. At 65%,
+  when the turn ends — the one moment no tool and no subagent is running — it is
+  asked to **ask you**, in one line, whether to write the handoff, and it writes
+  nothing until you answer. At 85%, if you carried on, it asks once more and the
+  handoff is rewritten whole, because the one from 65% has aged. Every value is
+  configurable under `context_window`; `confirm: false` skips the question.
+- **How full the window is, read from the transcript.** Hooks receive no figure
+  about the context, but every answer in the session transcript records the
+  `usage` of its request, and the sum of its three input fields is the context
+  that request occupied — the same sum the statusline paints. `output_tokens` is
+  not part of it. Answers that measure zero are skipped: Claude Code writes
+  "No response requested." as an assistant entry with every counter at zero, 30
+  of them in one machine's transcripts, and reading one as the latest would say
+  0%. The reading trails the statusline by one answer: Claude Code writes the
+  transcript a step after its hooks run, which a real session showed — when the
+  tool hooks fire, the answer that called the tool is not written yet. A few
+  thousand tokens, nothing next to a threshold.
+- **The window size, from the table Claude Code itself uses.** Extracted from
+  2.1.282, with the model read from the transcript's identity entry, the only
+  place the `[1m]` suffix survives. The frontier does not follow the family:
+  within Opus it moves at 4.7, within Sonnet at 5 — a `claude-sonnet-5` session
+  without a suffix really reached 295,549 tokens. A model newer than the table
+  starts at 200k and is learnt: reaching N tokens proves the window holds at
+  least N, so the size only goes up. The two `CLAUDE_CODE_*` window variables,
+  the `autoCompactWindow` setting and `context_window.budget_tokens` win over the
+  table.
+- `doctor` prints the last reading, the size it used and where that size came
+  from, so "why did it not ask me at 80%?" is one command away. Every turn's log
+  entry carries the percentage.
+
+### Changed
+- **A promise in "What baton will never do" is withdrawn.** It read: *"a `Stop`
+  that interrupts outside the moment right after a compaction"*. It described the
+  mechanism when what it protected was the principle — never interrupt with work
+  in flight — and a `Stop` at the end of a turn, before the compaction, keeps that
+  principle. It now reads: *"a `Stop` that interrupts with work in flight, or
+  twice at the same threshold"*. The promise about `PostToolUse` stands: the
+  early warning uses `PostToolBatch`, once per batch, and never blocks.
+- The reasoning "drafting at 70-80% is expensive and can trigger the compaction
+  it pre-empts" is gone from the code and both READMEs. It held at 80% of a 200k
+  window; at 65% of today's windows a handoff costs a few thousand tokens. What
+  survives of it is the cap: no threshold above 95.
+- The compaction request and the new one share one cooldown: what it protects is
+  the person, not a mechanism. When both are due at once the compaction wins and
+  the threshold stays available.
+
+### Fixed
+- A `pending.json` holding only the cooldown stamp counted as a pending
+  compaction. Nothing wrote one before this release; the new request does, and
+  the next turn would have asked for a compaction handoff with no compaction.
+  Caught by a test before it shipped.
+
+### Security
+- **baton now reads the session transcript**: the last 256 KB, plus the first
+  1 MB when the model's identity is not in the tail. It keeps three numbers and
+  the model id; nothing the conversation says is kept, logged or sent anywhere.
+  The format is Claude Code's internal one and will change — when baton does not
+  understand it, it stays quiet rather than guess. Only a path is opened: an
+  integer `transcript_path` would have been taken as a file descriptor, and
+  closed.
+
 ## 0.4.7 — 2026-09-14
 
 ### Fixed

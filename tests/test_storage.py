@@ -187,5 +187,96 @@ class TestEnvironmentErrors(BaseCase):
             storage.write_document(p, "x\n", history_max=5)
 
 
+class TestWindowState(BaseCase):
+    """What the automatic handoff by context remembers between turns."""
+
+    def setUp(self):
+        super().setUp()
+        self.p = storage.Paths(self.project)
+
+    def test_a_first_read_is_a_clean_state_for_this_session(self):
+        state = storage.read_window(self.p, "s1")
+        self.assertEqual(state, {"session": "s1", "marks": {}, "fired": [],
+                                 "warned": False, "last": {}})
+
+    def test_the_same_session_keeps_what_it_did(self):
+        state = storage.read_window(self.p, "s1")
+        state.update(fired=[65], warned=True, marks={"m": 300_000})
+        storage.save_window(self.p, state)
+        again = storage.read_window(self.p, "s1")
+        self.assertEqual((again["fired"], again["warned"]), ([65], True))
+
+    def test_a_new_session_starts_its_thresholds_over_but_keeps_the_marks(self):
+        # The marks are what was learnt about the window; the thresholds are what
+        # was asked in ONE session. /clear or a new session asks again.
+        state = storage.read_window(self.p, "s1")
+        state.update(fired=[65, 85], warned=True, marks={"m": 300_000})
+        storage.save_window(self.p, state)
+        fresh = storage.read_window(self.p, "s2")
+        self.assertEqual((fresh["session"], fresh["fired"], fresh["warned"]), ("s2", [], False))
+        self.assertEqual(fresh["marks"], {"m": 300_000})
+
+    def test_garbage_inside_is_dropped_field_by_field(self):
+        self.p.ensure_local()
+        self.p.window.write_text(json.dumps({
+            "session": "s1", "fired": [65, "x", True, 85], "warned": "yes",
+            "marks": {"good": 300_000, "bad": "lots", "worse": True}, "last": 7,
+        }), encoding="utf-8")
+        state = storage.read_window(self.p, "s1")
+        self.assertEqual(state["fired"], [65, 85])
+        self.assertIs(state["warned"], False)
+        self.assertEqual(state["marks"], {"good": 300_000})
+        self.assertEqual(state["last"], {})
+
+    def test_a_garbage_file_is_a_clean_state(self):
+        self.p.ensure_local()
+        for junk in ("[1, 2, 3]", '"a string"', "null", "{broken", "", "   "):
+            with self.subTest(junk=junk):
+                self.p.window.write_text(junk, encoding="utf-8")
+                self.assertEqual(storage.read_window(self.p, "s1")["fired"], [])
+
+
+class TestSharedCooldown(BaseCase):
+    """Two reasons to interrupt, ONE clock: what the cooldown protects is the
+    person, not a particular mechanism."""
+
+    def setUp(self):
+        super().setUp()
+        self.p = storage.Paths(self.project)
+
+    def pending(self):
+        return json.loads(self.p.pending.read_text(encoding="utf-8"))
+
+    def test_with_no_request_ever_the_way_is_clear(self):
+        self.assertTrue(storage.cooldown_clear(self.p, 30))
+
+    def test_a_recent_request_holds_the_next_one_back(self):
+        storage.note_request(self.p)
+        self.assertFalse(storage.cooldown_clear(self.p, 30))
+        self.assertTrue(storage.cooldown_clear(self.p, 0))
+
+    def test_a_window_request_does_not_swallow_a_pending_compaction(self):
+        # If it marked the compaction as requested, the model would never get
+        # the summary that compaction left behind.
+        storage.arm_pending(self.p, "s1")
+        storage.note_request(self.p)
+        data = self.pending()
+        self.assertIs(data["requested"], False)
+        self.assertIn("armed", data)
+        self.assertIn("last_request", data)
+
+    def test_a_window_request_alone_is_not_a_pending_compaction(self):
+        # It leaves pending.json with a stamp and nothing else. Read as pending,
+        # the next turn would ask for a compaction handoff with no compaction.
+        storage.note_request(self.p)
+        self.assertFalse(storage.has_pending(self.p, 0))
+
+    def test_the_compaction_path_respects_the_shared_clock(self):
+        storage.arm_pending(self.p, "s1")
+        storage.note_request(self.p)
+        self.assertFalse(storage.has_pending(self.p, 30))
+        self.assertTrue(storage.has_pending(self.p, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

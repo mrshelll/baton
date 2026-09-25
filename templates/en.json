@@ -107,5 +107,15 @@
     "unknown_project": "baton: no project matches '{name}'. Pass one of these to --project (a folder name is enough):",
     "loaded": "baton: `{name}` is now this session's active project.",
     "no_handoff_yet": "baton: `{name}` has no handoff yet ({path})."
+  },
+  "auto_handoff": {
+    "reason": "baton: this session has used about {percent}% of its context window ({used} of {budget} tokens), and nothing is running right now. Bringing the handoff up to date here, while the whole conversation is still intact, beats letting the harness compact it and decide for you what survives.\n\n{project}{again}{action}",
+    "project": "This session's active project is `{label}`; the handoff goes there, and baton's commands already target it.\n\n",
+    "again": "If a handoff was already written earlier in this session, rewrite it WHOLE: it has aged, and what it says about the state of the work is probably no longer true.\n\n",
+    "ask": "Do NOT write anything yet. Ask the user in ONE line whether to pause here and write the handoff, so the work can carry on in a new session -- for example: \"We are at {percent}% of the context: shall I write the handoff now so you can continue in a new session?\". If they say yes, write it following the `baton` skill. If they say no, carry on with what you were doing: baton will not ask again at this threshold.",
+    "write": "Write the handoff now following the `baton` skill: ask for the context with `baton.py context`, draft ONLY the body into the draft file, and write it with `baton.py write --mode <memory|continue>`. Then tell the user in one line that the handoff is written and that this is a good moment to continue in a new session.",
+    "watch": "baton: this session has used about {percent}% of its context window. Do not start a new task from here: finish the one in progress. baton will soon offer to write the handoff so the work can continue in a new session.",
+    "notice_ask": "baton: context at {percent}% -- Claude will ask whether to write the handoff.",
+    "notice_write": "baton: context at {percent}% -- Claude is writing the handoff."
   }
 }

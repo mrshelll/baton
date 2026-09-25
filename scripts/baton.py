@@ -468,10 +468,29 @@ def cmd_doctor(args) -> int:
     else:
         out.append(f"  Last hook run: {ts}")
 
+    out.append(_window_line(ctx))
+
     for w in cfg.warnings:
         out.append(f"  config warning: {w}")
     print("\n".join(out))
     return OK
+
+
+def _window_line(ctx) -> str:
+    """The last reading of the context window, so "why did it not warn me at
+    80%?" is one command away. The state lives at the session root."""
+    cw = ctx.cfg["context_window"]
+    if not cw["enabled"]:
+        return "  [--] context window: automatic handoff switched off"
+    last = storage.read_json(storage.Paths(ctx.root).window).get("last")
+    last = last if isinstance(last, dict) else {}
+    numbers = [last.get(k) for k in ("percent", "tokens", "budget")]
+    if not all(isinstance(n, int) and not isinstance(n, bool) for n in numbers):
+        return "  [--] context window: not measured yet (it is read when a turn ends)"
+    percent, tokens, budget = numbers
+    return (f"  [ok] context window: {percent}% at the last turn -- {tokens:,} of {budget:,} "
+            f"tokens ({last.get('model') or '?'}, size from {last.get('source') or '?'}); "
+            f"asks at {', '.join(f'{t}%' for t in cw['thresholds'])}")
 
 
 def main(argv=None) -> int:

@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-330-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-439-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -107,7 +107,69 @@ continuar trabajo.
 
 ## El ciclo automático
 
-Cuando el harness compacta solo, tú no estás pensando en traspasar. baton sí.
+Mientras trabajas no estás pensando en traspasar. baton sí, en dos momentos, los
+dos al terminar un turno, cuando no hay nada en marcha: cuando la ventana de
+contexto empieza a llenarse, y justo después de que el harness compacte.
+
+### Antes de que el harness compacte: la ventana de contexto
+
+Una compactación es el harness decidiendo por ti qué sobrevive de la conversación,
+y lo decide cuando la ventana se llena, no cuando tú estás listo para cortar.
+baton llega antes:
+
+```mermaid
+sequenceDiagram
+    participant U as Tú
+    participant CC as Claude Code
+    participant B as baton
+    participant D as .baton/HANDOFF.md
+
+    U->>CC: trabajas
+    CC->>B: PostToolBatch (tras un lote de herramientas)
+    B->>B: lee el transcript, 61 % de la ventana
+    B-->>CC: "no empieces una tarea nueva"
+    CC->>B: Stop (fin del turno, nada en marcha)
+    B->>B: 66 %, pasado el umbral del 65 %
+    B-->>U: en pantalla, contexto al 66 %
+    B-->>CC: "pregunta si escribes el traspaso"
+    CC->>U: ¿escribo el traspaso ahora?
+    U->>CC: sí
+    CC->>D: traspaso redactado y validado
+    U->>CC: abres sesión nueva
+```
+
+- **Al 60 %**, tras un lote de herramientas, se le dice al modelo una sola vez que
+  no empiece una tarea nueva y termine la que tiene en curso.
+- **Al 65 %**, al terminar el turno —el único momento en que no hay nada en
+  marcha, ni herramientas ni subagentes—, baton le pide al modelo que **te
+  pregunte**, en una línea, si escribe el traspaso. No se escribe nada hasta que
+  respondas. Si dices que no, no vuelve a preguntar en ese umbral.
+- **Al 85 %**, si seguiste trabajando igualmente, pregunta una vez más, y el
+  traspaso se reescribe entero: el del 65 % ya envejeció.
+
+**Cómo sabe cuánto se ha llenado la ventana.** Los hooks no reciben ningún dato
+del contexto. El transcript de la sesión sí: cada respuesta guarda el `usage` de
+su petición, y `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`
+es exactamente el contexto que ocupó esa petición —la misma suma que pinta la
+statusline—. El tamaño de la ventana sale del modelo: baton lleva la tabla que usa
+el propio Claude Code, y lee el modelo del transcript *con* su sufijo `[1m]`,
+porque `message.model` nunca lo trae. La frontera no va por familias —dentro de
+Opus cambia en 4.7, dentro de Sonnet en 5—, y por eso es una tabla y no una regla.
+
+Un modelo más nuevo que la tabla arranca en 200k y se **aprende**: una sesión que
+llega a N tokens es la prueba de que la ventana tiene al menos N, así que el tamaño
+solo sube. `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, el
+ajuste `autoCompactWindow` de Claude Code y `context_window.budget_tokens` mandan
+sobre la tabla.
+
+**Por qué los umbrales se quedan en 95.** Redactar un traspaso cuesta unos miles
+de tokens. Al 65 % no es nada; en el mismo borde podría disparar la compactación
+que existe para adelantar.
+
+### Después de que el harness compacte
+
+Si el disparo por ventana estaba apagado, lo rechazaste o un turno muy largo lo
+adelantó, la compactación llega igual. baton también la atrapa:
 
 ```mermaid
 sequenceDiagram
@@ -131,16 +193,17 @@ sequenceDiagram
     B-->>CC: additionalContext con modo y frescura
 ```
 
-**Por qué después de compactar y no antes.** Antes estás al 70-80 % de la ventana:
-redactar ahí es caro y la propia redacción puede disparar la compactación que
-intentabas anticipar. Después, el contexto está recién vaciado.
+**Por qué pedirlo justo después.** El contexto acaba de vaciarse y el resumen está
+fresco: es el momento más barato de la sesión para redactar.
 
 `PreCompact` no sirve para esto: en la compactación no hay turno de modelo. El
 propio binario lo dice al rechazar los hooks que requieren conversación —
 *"no conversation context is available"*.
 
-**Como mucho una interrupción por compactación**, con anti-bucle nativo
-(`stop_hook_active`) y un cooldown de 30 minutos configurable.
+**Como mucho una interrupción por umbral y por compactación**, con anti-bucle
+nativo (`stop_hook_active`) y un cooldown de 30 minutos que comparten las dos
+razones: lo que protege eres tú, no un mecanismo. Si las dos tocan a la vez, gana
+la compactación: su resumen es mejor material, y el umbral queda disponible.
 
 **El resumen es insumo, nunca producto.** Un resumen de compactación real ocupó
 **12.780 bytes** frente a un presupuesto de 6.000 caracteres. Guardarlo tal cual
@@ -415,7 +478,11 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
   "receipt": true,
   "receipt_lines": 12,
   "language": "es",
-  "discovery": { "depth": 2, "max_dirs": 400 }
+  "discovery": { "depth": 2, "max_dirs": 400 },
+  "context_window": {
+    "enabled": true, "watch_at": 60, "thresholds": [65, 85],
+    "confirm": true, "budget_tokens": 0, "min_tokens": 40000
+  }
 }
 ```
 
@@ -433,6 +500,15 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
 | `language` | `en` | Idioma de todo lo que lee un humano |
 | `discovery.depth` | `2` | Cuántos niveles se buscan proyectos (1-4). **Solo en la raíz** |
 | `discovery.max_dirs` | `400` | Tope de carpetas miradas por escaneo |
+| `context_window.enabled` | `true` | El traspaso que se pide cuando la ventana se llena |
+| `context_window.watch_at` | `60` | % en el que se le dice al modelo, una vez, que vaya cerrando; `0` lo apaga |
+| `context_window.thresholds` | `[65, 85]` | % en los que baton pide el traspaso al terminar el turno: de 1 a 4 valores, ninguno por encima de 95 |
+| `context_window.confirm` | `true` | Preguntarte antes de escribir; `false` escribe directamente |
+| `context_window.budget_tokens` | `0` | Tamaño de la ventana en tokens; `0` lo deduce del modelo |
+| `context_window.min_tokens` | `40000` | Por debajo de estos tokens no salta nada, diga lo que diga el porcentaje |
+
+`cooldown_minutes` y `context_window` se leen de la carpeta donde corre la sesión,
+no de un subproyecto cargado en ella.
 
 **Las claves de config van en inglés en todos los idiomas.** Son una interfaz de
 máquina, y quien las escribe no debería tener que hablar otro. `"language"` cambia
@@ -456,6 +532,17 @@ entrada no confiable:
   instrucciones.
 - El modo se lee **solo** del frontmatter, que escribe el código: un cuerpo que
   finja otro modo no cambia nada.
+
+**baton lee el transcript de la sesión.** Para saber cuánto se ha llenado la
+ventana, los hooks que corren al terminar un turno y tras un lote de herramientas
+leen los últimos 256 KB del transcript que Claude Code guarda de la sesión
+(`transcript_path`), y su primer 1 MB cuando la identidad del modelo no está en la
+cola. Las líneas se interpretan en memoria para sacar tres números —los contadores
+de entrada de la última respuesta— y el id del modelo. Nada de lo que dice la
+conversación se guarda, se registra ni se envía a ningún sitio: lo que llega al
+disco es un recuento de tokens por modelo en `.baton/local/window.json`. El formato
+es el interno de Claude Code y va a cambiar; cuando baton no lo entienda, se calla
+en vez de adivinar.
 
 ## Comprobar que tu instalación funciona de verdad
 
@@ -513,6 +600,21 @@ una línea si el traspaso es de `a` o de la raíz, y escribir en
 - Ejecuta `/baton`: debe escribir en `<raiz>/a/.baton/HANDOFF.md` y decir esa ruta.
 - `baton.py doctor` lista los dos proyectos y nombra a `a` como activo.
 
+**6. La ventana de contexto.** En un proyecto donde hayas ejecutado `/baton`, pon
+esto en `.claude/baton.json`, para que los umbrales se crucen desde el primer turno:
+
+```json
+{ "context_window": { "watch_at": 1, "thresholds": [1, 85], "min_tokens": 0 } }
+```
+
+Pide cualquier cosa que use una herramienta. Al terminar el turno deberías ver
+`baton: contexto al N%` y el modelo debería preguntarte, en una línea, si escribe
+el traspaso. Responde que no: sigue con lo suyo y **no vuelve a preguntar**.
+`baton.py doctor` muestra la última lectura. Si tu statusline enseña el contexto,
+el tamaño de la ventana tiene que coincidir exacto; los tokens van una respuesta
+por detrás, porque Claude Code escribe el transcript un paso después de sus hooks.
+Quita esas líneas al terminar.
+
 ## Cuando no funciona
 
 Un hook que no dispara no da error: no da nada. Por eso hay cuatro capas:
@@ -520,12 +622,22 @@ Un hook que no dispara no da error: no da nada. Por eso hay cuatro capas:
 1. **El recibo** — su primera línea al inyectar. Si no la ves, no disparó.
 2. **La bitácora** (`.baton/local/log.jsonl`) — es lo único que distingue *«no
    disparó»* de *«disparó y calló porque no había documento»*: idénticos desde
-   fuera, con causas opuestas.
+   fuera, con causas opuestas. La entrada de cada turno lleva el porcentaje de
+   contexto. La única excepción es la comprobación tras cada lote de herramientas,
+   que solo escribe cuando habla: corre demasiado a menudo para registrarla siempre.
 3. **`doctor`** — comprueba hooks, `python3`, `git`, si el plugin está habilitado y
    si hay actividad reciente. Si no la hay, lista las causas por probabilidad,
    empezando por «instalaste sin reiniciar».
 4. **El silencio significa una sola cosa**: no hay documento. Cualquier otro
    problema avisa nombrando el fichero.
+
+**«Nunca me preguntó, y yo iba por encima del 65 %.»** Por orden de probabilidad:
+ya dijiste que no en ese umbral durante esta sesión; salió otra petición hace
+menos de 30 minutos (`cooldown_minutes`); o el tamaño de la ventana está mal.
+`doctor` muestra la última lectura, el tamaño que usó y **de dónde salió** —
+`model`, `env`, `settings`, `config`, `calibrated` o `default`—. Compáralo con tu
+statusline: el tamaño de la ventana tiene que coincidir exacto —los tokens van una
+respuesta por detrás—. Si el tamaño está mal, fija `context_window.budget_tokens`.
 
 ## Requisitos
 
@@ -537,7 +649,7 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 ./tests/run.sh
 ```
 
-330 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+439 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.
@@ -546,8 +658,9 @@ crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.
 
 Añadir al final del documento en vez de reescribirlo · escribir secciones con
 «ninguno» · caducar un traspaso · abrir la sesión nueva por ti · hooks
-`PostToolUse` o `UserPromptSubmit` · un `Stop` que te interrumpa fuera del momento
-posterior a una compactación · una segunda implementación en bash.
+`PostToolUse` o `UserPromptSubmit` · un `Stop` que te interrumpa con trabajo en
+marcha, o dos veces en el mismo umbral · bloquear nada tras un lote de
+herramientas · una segunda implementación en bash.
 
 ## Licencia
 

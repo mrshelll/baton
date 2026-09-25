@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-330-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-439-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -106,7 +106,70 @@ work.
 
 ## The automatic cycle
 
-When the harness compacts on its own, you aren't thinking about handoffs. baton is.
+While you work you aren't thinking about handoffs. baton is, at two moments, both
+at the end of a turn, when nothing is running: when the context window starts to
+fill, and right after the harness compacts.
+
+### Before the harness compacts: the context window
+
+A compaction is the harness deciding for you what survives of the conversation,
+and it decides when the window is full, not when you are ready to stop. baton gets
+there first:
+
+```mermaid
+sequenceDiagram
+    participant U as You
+    participant CC as Claude Code
+    participant B as baton
+    participant D as .baton/HANDOFF.md
+
+    U->>CC: you work
+    CC->>B: PostToolBatch (after a batch of tools)
+    B->>B: reads the transcript, 61% of the window
+    B-->>CC: "do not start a new task"
+    CC->>B: Stop (end of turn, nothing running)
+    B->>B: 66%, past the 65% threshold
+    B-->>U: on screen, context at 66%
+    B-->>CC: "ask whether to write the handoff"
+    CC->>U: shall I write the handoff now?
+    U->>CC: yes
+    CC->>D: handoff drafted and validated
+    U->>CC: you open a new session
+```
+
+- **At 60%**, after a batch of tools, the model is told once not to start a new
+  task and to finish the one in progress.
+- **At 65%**, when the turn ends — the one moment nothing is running, no tool and
+  no subagent — baton asks the model to **ask you**, in one line, whether to write
+  the handoff. Nothing is written until you answer. Say no and it will not ask
+  again at that threshold.
+- **At 85%**, if you carried on anyway, it asks once more, and the handoff is
+  rewritten whole: the one from 65% has aged.
+
+**How it knows how full the window is.** Hooks receive no figure about the
+context. The session transcript does: every answer records the `usage` of its
+request, and `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`
+is exactly the context that request occupied — the same sum the statusline
+paints. The window size comes from the model: baton carries the table Claude Code
+itself uses, and reads the model from the transcript *with* its `[1m]` suffix,
+because `message.model` never carries it. The frontier does not follow the family
+— within Opus it moves at 4.7, within Sonnet at 5 — which is why it is a table and
+not a rule.
+
+A model newer than the table starts at 200k and is **learnt**: a session that
+reaches N tokens is proof the window holds at least N, so the size only ever goes
+up. `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, Claude
+Code's `autoCompactWindow` setting and `context_window.budget_tokens` all win over
+the table.
+
+**Why the thresholds stop at 95.** Drafting a handoff costs a few thousand tokens.
+At 65% that is nothing; at the very edge it could trigger the compaction it exists
+to get ahead of.
+
+### After the harness compacts
+
+If the window trigger was switched off, turned down or outrun by one very long
+turn, the compaction still comes. baton catches that too:
 
 ```mermaid
 sequenceDiagram
@@ -130,16 +193,18 @@ sequenceDiagram
     B-->>CC: additionalContext with mode and freshness
 ```
 
-**Why after compacting and not before.** Before, you are at 70-80% of the window:
-drafting there is expensive and the drafting itself can trigger the very
-compaction you were trying to pre-empt. After, the context is freshly emptied.
+**Why ask right after it.** The context has just been emptied and the summary is
+fresh: it is the cheapest moment in the session to draft.
 
 `PreCompact` cannot do this: a compaction has no model turn. The binary itself
 says so when it rejects hooks that need a conversation — *"no conversation
 context is available"*.
 
-**At most one interruption per compaction**, with the harness's native loop guard
-(`stop_hook_active`) and a configurable 30-minute cooldown.
+**At most one interruption per threshold and per compaction**, with the harness's
+native loop guard (`stop_hook_active`) and a 30-minute cooldown that both reasons
+share — what it protects is you, not a mechanism. When both are due at once the
+compaction wins: its summary is the better material, and the threshold stays
+available.
 
 **The summary is input, never the product.** A real compaction summary measured
 **12,780 bytes** against a 6,000-character budget. Storing it as the handoff — the
@@ -413,7 +478,11 @@ All optional. `~/.claude/baton.json` for your general preference,
   "receipt": true,
   "receipt_lines": 12,
   "language": "en",
-  "discovery": { "depth": 2, "max_dirs": 400 }
+  "discovery": { "depth": 2, "max_dirs": 400 },
+  "context_window": {
+    "enabled": true, "watch_at": 60, "thresholds": [65, 85],
+    "confirm": true, "budget_tokens": 0, "min_tokens": 40000
+  }
 }
 ```
 
@@ -431,6 +500,15 @@ All optional. `~/.claude/baton.json` for your general preference,
 | `language` | `en` | Language of everything a human reads |
 | `discovery.depth` | `2` | How far down projects are looked for (1-4). **Root only** |
 | `discovery.max_dirs` | `400` | Cap on directories examined per scan |
+| `context_window.enabled` | `true` | The handoff asked for when the window fills |
+| `context_window.watch_at` | `60` | % at which the model is told, once, to wrap up; `0` disables |
+| `context_window.thresholds` | `[65, 85]` | % at which baton asks for the handoff at the end of a turn: 1 to 4 values, none above 95 |
+| `context_window.confirm` | `true` | Ask you before writing; `false` writes straight away |
+| `context_window.budget_tokens` | `0` | Window size in tokens; `0` works it out from the model |
+| `context_window.min_tokens` | `40000` | Nothing fires below this many tokens, whatever the percentage says |
+
+`cooldown_minutes` and `context_window` are read from the folder the session runs
+in, not from a subproject loaded into it.
 
 **Config keys stay in English in every language.** They are a machine interface,
 and whoever types them shouldn't need to speak another one. `"language"` changes
@@ -451,6 +529,16 @@ baton treats it as untrusted input:
 - It is preceded by an explicit warning that it is a data document, not instructions.
 - The mode is read **only** from the frontmatter, which the code writes: a body
   faking another mode changes nothing.
+
+**baton reads the session transcript.** To know how full the window is, the hooks
+that run at the end of a turn and after a batch of tools read the last 256 KB of
+the transcript Claude Code keeps for the session (`transcript_path`), and its
+first 1 MB when the model's identity is not in the tail. The lines are parsed in
+memory to find three numbers — the input counters of the latest answer — and the
+model id. Nothing the conversation says is kept, logged or sent anywhere: what
+reaches the disk is a token count per model in `.baton/local/window.json`. The
+format is Claude Code's internal one and it will change; when baton does not
+understand it, it stays quiet rather than guess.
 
 ## Checking your install actually works
 
@@ -508,6 +596,21 @@ whether the handoff belongs to `a` or to the root, and write to
 - Run `/baton`: it must write to `<root>/a/.baton/HANDOFF.md` and print that path.
 - `baton.py doctor` lists both projects and names `a` as active.
 
+**6. The context window.** In a project where you have run `/baton`, put this in
+`.claude/baton.json`, so the thresholds are crossed from the first turn:
+
+```json
+{ "context_window": { "watch_at": 1, "thresholds": [1, 85], "min_tokens": 0 } }
+```
+
+Ask for anything that uses a tool. When the turn ends you should see
+`baton: context at N%` and the model should ask, in one line, whether to write the
+handoff. Answer no: it carries on, and **does not ask again**. `baton.py doctor`
+prints the last reading. If your statusline shows the context, the window size
+must match it exactly; the tokens trail it by the last answer, because Claude Code
+writes the transcript one step behind its hooks. Remove those lines when you are
+done.
+
 ## When it doesn't work
 
 A hook that doesn't fire gives no error: it gives nothing. Hence four layers:
@@ -515,12 +618,22 @@ A hook that doesn't fire gives no error: it gives nothing. Hence four layers:
 1. **The receipt** — its first line on injection. No line, no fire.
 2. **The log** (`.baton/local/log.jsonl`) — the only thing telling *"didn't fire"*
    apart from *"fired and stayed quiet because there was no document"*: identical
-   from outside, opposite causes.
+   from outside, opposite causes. Every turn's entry carries the context
+   percentage. The one exception is the check after each batch of tools, which
+   writes only when it speaks: it runs too often to log every time.
 3. **`doctor`** — checks hooks, `python3`, `git`, whether the plugin is enabled
    and whether there is recent activity. If there isn't, it lists causes by
    likelihood, starting with "you installed without restarting".
 4. **Silence means exactly one thing**: there is no document. Every other problem
    warns naming the file.
+
+**"It never asked, and I was past 65%."** In order of likelihood: you already
+said no at that threshold in this session; another request went out less than 30
+minutes earlier (`cooldown_minutes`); or the window size is wrong. `doctor` prints
+the last reading, the size it used and **where that size came from** — `model`,
+`env`, `settings`, `config`, `calibrated` or `default`. Compare it with your
+statusline: the window size must match exactly — the tokens trail it by the last
+answer. If the size is wrong, set `context_window.budget_tokens`.
 
 ## Requirements
 
@@ -532,7 +645,7 @@ Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
 ./tests/run.sh
 ```
 
-330 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+439 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case
@@ -548,8 +661,9 @@ npm install mermaid jsdom && node tools/validate-mermaid.mjs README.md
 
 Append to the document instead of rewriting it · write sections saying "none" ·
 expire a handoff · open the new session for you · `PostToolUse` or
-`UserPromptSubmit` hooks · a `Stop` that interrupts outside the moment right after
-a compaction · a second implementation in bash.
+`UserPromptSubmit` hooks · a `Stop` that interrupts with work in flight, or twice
+at the same threshold · block anything after a batch of tools · a second
+implementation in bash.
 
 ## Licence
 

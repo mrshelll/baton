@@ -94,6 +94,7 @@ class Paths:
         self.deliveries = self.local / "deliveries.json"
         self.attempts = self.local / "attempts.json"
         self.pending = self.local / "pending.json"
+        self.window = self.local / "window.json"
         self.log = self.local / "log.jsonl"
         self.lock = self.local / ".lock"
 
@@ -369,6 +370,20 @@ def arm_pending(paths: Paths, session_id: str = "") -> None:
     write_json(paths.pending, data)
 
 
+def cooldown_clear(paths: Paths, cooldown_minutes: int = 30) -> bool:
+    """True when no handoff was requested within the cooldown.
+
+    ONE clock for every reason to interrupt -- a compaction or a full window --
+    because what it protects is the person, not a particular mechanism: two
+    requests thirty seconds apart are the failure it exists to prevent, whoever
+    makes them.
+    """
+    last = from_utc(read_json(paths.pending).get("last_request"))
+    if not last or not cooldown_minutes:
+        return True
+    return (datetime.now(timezone.utc) - last).total_seconds() >= cooldown_minutes * 60
+
+
 def has_pending(paths: Paths, cooldown_minutes: int = 30) -> bool:
     """True when the handoff should be requested.
 
@@ -377,13 +392,11 @@ def has_pending(paths: Paths, cooldown_minutes: int = 30) -> bool:
     compaction.
     """
     data = read_json(paths.pending)
-    if not data or data.get("requested"):
+    # `armed`, not merely a file: a request for a full window leaves this file
+    # holding only the cooldown stamp, and that is no compaction.
+    if not data.get("armed") or data.get("requested"):
         return False
-    last = from_utc(data.get("last_request"))
-    if last and cooldown_minutes:
-        if (datetime.now(timezone.utc) - last).total_seconds() < cooldown_minutes * 60:
-            return False
-    return True
+    return cooldown_clear(paths, cooldown_minutes)
 
 
 def consume_pending(paths: Paths) -> None:
@@ -392,3 +405,45 @@ def consume_pending(paths: Paths) -> None:
     data["requested"] = True
     data["last_request"] = now_utc()
     write_json(paths.pending, data)
+
+
+def note_request(paths: Paths) -> None:
+    """Stamp the cooldown clock and NOTHING else.
+
+    It is what a request for a full window leaves behind. `armed` and
+    `requested` belong to the compaction, and a request made for another reason
+    says nothing about them."""
+    data = read_json(paths.pending)
+    data["last_request"] = now_utc()
+    write_json(paths.pending, data)
+
+
+# --- automatic handoff by context usage -----------------------------------
+
+def _is_count(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def read_window(paths: Paths, session_id: str) -> dict:
+    """What the context trigger remembers, cleaned field by field.
+
+    `marks` (the largest context seen per model) outlive the session: they are
+    what was learnt about the window. `fired` and `warned` belong to ONE session
+    and start over when the session changes -- a /clear asks again."""
+    data = read_json(paths.window)
+    marks = data.get("marks")
+    marks = ({k: v for k, v in marks.items() if isinstance(k, str) and _is_count(v) and v > 0}
+             if isinstance(marks, dict) else {})
+    state = {"session": session_id, "marks": marks, "fired": [], "warned": False, "last": {}}
+    if data.get("session") == session_id:
+        fired = data.get("fired")
+        if isinstance(fired, list):
+            state["fired"] = sorted({n for n in fired if _is_count(n)})
+        state["warned"] = data.get("warned") is True
+    if isinstance(data.get("last"), dict):
+        state["last"] = data["last"]
+    return state
+
+
+def save_window(paths: Paths, state: dict) -> None:
+    write_json(paths.window, state)

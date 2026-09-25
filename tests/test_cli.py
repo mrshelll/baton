@@ -192,5 +192,45 @@ class TestDoctor(Base):
         self.assertNotIn("NO trace at all", p.stdout)
 
 
+class TestDoctorContextWindow(Base):
+    """"Why did it not warn me at 80%?" has to have an answer one command away."""
+
+    def setUp(self):
+        super().setUp()
+        sys.path.insert(0, str(REPO_ROOT))
+        from lib import storage
+        self.storage = storage
+        d = self.project / ".baton"; d.mkdir(parents=True)
+        (d / "HANDOFF.md").write_text("---\nbaton: 1\n---\n", encoding="utf-8")
+
+    def remember(self, last):
+        self.storage.save_window(self.storage.Paths(self.project), {"last": last})
+
+    def test_it_shows_the_last_reading_and_where_the_size_came_from(self):
+        self.remember({"percent": 23, "tokens": 231_000, "budget": 1_000_000,
+                       "model": "claude-opus-5-5[1m]", "source": "model"})
+        p = self.cli("doctor")
+        self.assertEqual(p.returncode, OK, p.stderr)
+        for expected in ("23%", "231,000", "1,000,000", "claude-opus-5-5[1m]", "model"):
+            self.assertIn(expected, p.stdout)
+
+    def test_before_the_first_turn_it_says_so(self):
+        p = self.cli("doctor")
+        self.assertIn("not measured yet", p.stdout)
+
+    def test_a_garbage_reading_is_not_measured_yet(self):
+        self.remember({"percent": "lots", "tokens": None, "budget": "x"})
+        p = self.cli("doctor")
+        self.assertEqual(p.returncode, OK, p.stderr)
+        self.assertIn("not measured yet", p.stdout)
+
+    def test_switched_off_it_says_so(self):
+        (self.project / ".claude").mkdir()
+        (self.project / ".claude" / "baton.json").write_text(
+            '{"context_window": {"enabled": false}}', encoding="utf-8")
+        p = self.cli("doctor")
+        self.assertIn("switched off", p.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

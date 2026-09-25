@@ -143,5 +143,87 @@ class TestDiscoveryKey(BaseCase):
         self.assertTrue(any("discovery" in w for w in cfg.warnings))
 
 
+class TestContextWindow(BaseCase):
+    """The automatic handoff by context usage: one block, validated key by key."""
+
+    def load(self, data):
+        (self.project / ".claude").mkdir(exist_ok=True)
+        (self.project / ".claude" / "baton.json").write_text(json.dumps(data), encoding="utf-8")
+        return config.load(self.project, global_path=self.project / "no-global.json")
+
+    def test_overriding_one_key_keeps_the_others(self):
+        c = self.load({"context_window": {"confirm": False}})
+        self.assertFalse(c["context_window"]["confirm"])
+        self.assertEqual(c["context_window"]["thresholds"],
+                         config.DEFAULTS["context_window"]["thresholds"])
+        self.assertEqual(c.warnings, [])
+
+    def test_thresholds_come_back_sorted_and_without_repeats(self):
+        # The hook takes "the highest crossed" and marks everything below it as
+        # consumed: an unsorted list would break neither loudly nor at once.
+        c = self.load({"context_window": {"thresholds": [85, 65, 85]}})
+        self.assertEqual(c["context_window"]["thresholds"], [65, 85])
+
+    def test_bad_thresholds_warn_and_keep_the_default(self):
+        default = config.DEFAULTS["context_window"]["thresholds"]
+        for bad in ("70", [], [1, 2, 3, 4, 5], [True], [0], [65, "85"], None):
+            with self.subTest(bad=bad):
+                c = self.load({"context_window": {"thresholds": bad}})
+                self.assertEqual(c["context_window"]["thresholds"], default)
+                self.assertTrue(any("thresholds" in w for w in c.warnings))
+
+    def test_a_threshold_above_95_says_why(self):
+        # Past 95 the drafting itself can trigger the compaction it pre-empts.
+        c = self.load({"context_window": {"thresholds": [65, 99]}})
+        self.assertEqual(c["context_window"]["thresholds"],
+                         config.DEFAULTS["context_window"]["thresholds"])
+        self.assertTrue(any("compact" in w for w in c.warnings))
+
+    def test_switches_must_be_booleans(self):
+        for key in ("enabled", "confirm"):
+            with self.subTest(key=key):
+                c = self.load({"context_window": {key: "yes"}})
+                self.assertIs(c["context_window"][key], config.DEFAULTS["context_window"][key])
+                self.assertTrue(any(key in w for w in c.warnings))
+
+    def test_watch_at_zero_turns_the_early_warning_off(self):
+        self.assertEqual(self.load({"context_window": {"watch_at": 0}})
+                         ["context_window"]["watch_at"], 0)
+
+    def test_numbers_out_of_range_warn(self):
+        for key, bad in (("watch_at", 96), ("watch_at", -1), ("budget_tokens", 5000),
+                         ("budget_tokens", True), ("min_tokens", -1)):
+            with self.subTest(key=key, bad=bad):
+                c = self.load({"context_window": {key: bad}})
+                self.assertEqual(c["context_window"][key], config.DEFAULTS["context_window"][key])
+                self.assertTrue(any(key in w for w in c.warnings))
+
+    def test_a_budget_of_zero_means_automatic(self):
+        c = self.load({"context_window": {"budget_tokens": 0}})
+        self.assertEqual(c["context_window"]["budget_tokens"], 0)
+        self.assertEqual(c.warnings, [])
+
+    def test_an_unknown_subkey_warns(self):
+        c = self.load({"context_window": {"thresold": [70]}})
+        self.assertTrue(any("context_window.thresold" in w for w in c.warnings))
+
+    def test_a_block_that_is_not_an_object_warns_instead_of_replacing(self):
+        c = self.load({"context_window": 65})
+        self.assertEqual(c["context_window"], config.DEFAULTS["context_window"])
+        self.assertTrue(any("context_window" in w for w in c.warnings))
+
+    def test_the_likely_typo_gets_a_hint(self):
+        c = self.load({"threshold": 65})
+        self.assertTrue(any("context_window.thresholds" in w for w in c.warnings))
+
+    def test_the_loaded_list_is_not_the_defaults_list(self):
+        # dict() copies the block but SHARES the list inside it: an append on a
+        # loaded config would poison DEFAULTS for the rest of the process.
+        before = list(config.DEFAULTS["context_window"]["thresholds"])
+        c = config.load(self.project, global_path=self.project / "no-global.json")
+        c["context_window"]["thresholds"].append(90)
+        self.assertEqual(config.DEFAULTS["context_window"]["thresholds"], before)
+
+
 if __name__ == "__main__":
     unittest.main()

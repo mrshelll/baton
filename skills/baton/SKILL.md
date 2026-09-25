@@ -141,8 +141,16 @@ By exit code:
   problem: do not trim.
 - **3 — environment.** Stop and tell the user. Do not retry.
 
-## When the hook asks you after a compaction
+## When the hook asks you
 
-If you got here because baton asked at the end of a turn, the compaction summary
-is in your context: it is your best material. Do the same as always and respect
-the budget — **do not copy the summary, distil it**.
+baton asks at the end of a turn for one of two reasons, and the request says
+which.
+
+- **After a compaction.** The compaction summary is in your context: it is your
+  best material. Do the same as always and respect the budget — **do not copy
+  the summary, distil it**.
+- **Because the context window is filling up.** There is no summary: the
+  material is the conversation itself, still whole, which is better. If the
+  request says to ask first, ask in **one** line and write nothing until the user
+  answers. If a handoff was already written earlier in this session, rewrite it
+  whole: it has aged.

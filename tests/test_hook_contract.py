@@ -11,7 +11,7 @@ import unittest
 
 from tests.helpers import REPO_ROOT, BaseCase, clean_env
 
-EVENTS = ("session-start", "post-compact", "stop")
+EVENTS = ("session-start", "post-compact", "stop", "tool-batch")
 
 
 class TestAlwaysExitsZero(BaseCase):
@@ -56,6 +56,25 @@ class TestAlwaysExitsZero(BaseCase):
             [sys.executable, str(REPO_ROOT / "hooks" / "baton_hook.py")],
             input="{}", capture_output=True, text=True, env=clean_env(), timeout=30)
         self.assertEqual(p.returncode, 0, p.stderr)
+
+
+class TestHostileTranscripts(BaseCase):
+    """In an ENABLED project, which is where the transcript actually gets read."""
+
+    def test_whatever_the_transcript_is_the_exit_is_zero(self):
+        doc = self.project / ".baton" / "HANDOFF.md"
+        doc.parent.mkdir(parents=True)
+        doc.write_text("---\nbaton: 1\nmode: memory\n---\n## State\nx\n", encoding="utf-8")
+        binary = self.project / "binary.jsonl"
+        binary.write_bytes(bytes(range(256)) * 64)
+        for transcript in (str(binary), str(self.project), str(self.project / "missing"),
+                           "", 12345, None, ["a"]):
+            for event in ("stop", "tool-batch"):
+                with self.subTest(event=event, transcript=transcript):
+                    rc, out, err = self.run_hook(event, self.payload(
+                        event, transcript_path=transcript))
+                    self.assertEqual(rc, 0, err)
+                    self.assertIsNone(out)
 
 
 class TestHookLog(BaseCase):

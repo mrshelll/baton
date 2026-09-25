@@ -6,9 +6,10 @@ process ALWAYS exits 0**. A corrupt handoff, a stdin that is not JSON or a full
 disk cannot stop a Claude Code session from starting. All the logic sits inside
 an `except BaseException` that degrades to a readable message.
 
-The event arrives as argv[1] (`session-start`, `post-compact`, `stop`) because
-hooks.json uses the `command: python3` + `args: [...]` form, which never goes
-through a shell and is therefore immune to paths with spaces.
+The event arrives as argv[1] (`session-start`, `post-compact`, `stop`,
+`tool-batch`) because hooks.json uses the `command: python3` + `args: [...]`
+form, which never goes through a shell and is therefore immune to paths with
+spaces.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import config, document, gitinfo, output, projects, storage  # noqa: E402
+from lib import config, document, gitinfo, output, projects, storage, window  # noqa: E402
 
 
 def _read_input() -> dict:
@@ -144,22 +145,103 @@ def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[
     storage.save_summary(target, entry.get("compact_summary") or "",
                          trigger=entry.get("trigger") or "auto")
     storage.arm_pending(target, entry.get("session_id") or "")
+
+    # A compaction moves the baseline -- 90% becomes 20% -- so the thresholds
+    # already met describe an occupation that no longer exists.
+    state = storage.read_window(paths, entry.get("session_id") or "")
+    if state["fired"] or state["warned"]:
+        storage.save_window(paths, dict(state, fired=[], warned=False))
     return {}, "summary saved, handoff pending"
 
 
+def _k(tokens: int) -> str:
+    """Thousands, the way the statusline paints them: 231k, 1000k."""
+    return f"{round(tokens / 1000)}k"
+
+
+def _describe(reading) -> str:
+    if not reading.known:
+        return "context unknown"
+    return f"context {reading.percent}% of {_k(reading.budget)} ({reading.source})"
+
+
+def _measure(entry: dict, cfg, root, state: dict) -> tuple[window.Reading, dict]:
+    """Read how full the window is and learn from it. Returns (reading, state).
+
+    The state lives at the session's ROOT, not at the handoff's target: it
+    describes this session and its window, and a /baton load mid-session must
+    not make it forget what it already asked."""
+    reading, marks, _ = window.assess(
+        entry.get("transcript_path"), seen=state["marks"], env=os.environ,
+        budget_tokens=cfg["context_window"]["budget_tokens"],
+        settings_window=window.settings_window(root))
+    state = dict(state, marks=marks)
+    if reading.known:
+        state["last"] = {"percent": reading.percent, "tokens": reading.tokens,
+                         "budget": reading.budget, "model": reading.model,
+                         "source": reading.source, "at": storage.now_utc()}
+    return reading, state
+
+
+def _window_request(target: storage.Paths, label: str, cfg, reading,
+                    state: dict) -> tuple[dict, str]:
+    """Ask for the handoff if the window crossed a threshold not yet asked.
+
+    A threshold is marked as asked -- in `state`, which the caller saves -- ONLY
+    when the request goes out. Held back by the cooldown, it is tried again at
+    the next turn: postponed, not lost."""
+    if not reading.known:
+        return {}, "silent: context unknown"
+    cw = cfg["context_window"]
+    measured = _describe(reading)
+    if not cw["enabled"]:
+        return {}, f"silent: {measured}, trigger off"
+    tier = window.tier_reached(reading, cw["thresholds"], state["fired"], cw["min_tokens"])
+    if tier is None:
+        return {}, f"silent: {measured}"
+    if not storage.cooldown_clear(target, cfg["cooldown_minutes"]):
+        return {}, f"silent: {measured}, {tier}% waits for the cooldown"
+
+    again = bool(state["fired"])
+    state["fired"] = sorted(set(state["fired"]) | {t for t in cw["thresholds"] if t <= tier})
+    storage.note_request(target)
+
+    strings = output.load_strings(cfg["language"])["auto_handoff"]
+    numbers = {"percent": reading.percent, "used": _k(reading.tokens),
+               "budget": _k(reading.budget)}
+    action = strings["ask" if cw["confirm"] else "write"].format(**numbers)
+    reason = strings["reason"].format(
+        **numbers, action=action,
+        project=strings["project"].format(label=label) if label else "",
+        again=strings["again"] if again else "")
+    notice = strings["notice_ask" if cw["confirm"] else "notice_write"].format(**numbers)
+    return ({"decision": "block", "reason": reason, "systemMessage": notice},
+            f"handoff requested at {reading.percent}% (threshold {tier})"
+            f"{f' for {label}' if label else ''}")
+
+
 def _stop(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, str]:
-    """Ask for the handoff, but only at the right moment.
+    """Ask for the handoff at one of two moments, and never with work in flight.
 
-    That moment is right after a compaction: the context has just been emptied,
-    so drafting is the cheapest it will ever be in the session. Doing it before,
-    at 70-80% of the window, would be expensive and the drafting itself could
-    trigger the very compaction it was trying to pre-empt.
+    A Stop fires when the model has finished its turn: no tool is running and no
+    subagent is alive, so it is the one moment a request cannot cut anything in
+    half. There are two reasons to use it:
 
-    Three gates before interrupting anyone: `stop_hook_active` false (the
-    harness's own loop guard), an armed flag, and the cooldown.
+    1. Right after a compaction. The summary is fresh in the context and
+       drafting is the cheapest it will ever be.
+    2. When the session crosses a threshold of its context window -- BEFORE the
+       harness compacts and decides by itself what survives. The thresholds stay
+       at or below 95% on purpose: drafting costs a few thousand tokens, and at
+       the very edge that alone could trigger the compaction being pre-empted.
+
+    The compaction wins a tie: its summary is the better material, and the
+    threshold is not consumed, so it stays available. Both reasons share one
+    cooldown, because what it protects is the person.
     """
     if entry.get("stop_hook_active"):
         return {}, "silent: already inside a blocked Stop"
+    if entry.get("agent_id"):
+        return {}, "silent: subagent"
 
     # A hook cannot ask which project this was about, so with no resolvable
     # target it says nothing. Interrupting with a question it cannot answer on
@@ -168,30 +250,73 @@ def _stop(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, st
     if target is None:
         return {}, "silent: no resolvable target"
 
-    if not storage.has_pending(target, cfg["cooldown_minutes"]):
-        return {}, "silent: nothing pending"
+    # Measured on every turn, whatever happens next: that is what calibrates the
+    # window and what puts the percentage in the log.
+    reading, state = _measure(entry, cfg, root,
+                              storage.read_window(paths, entry.get("session_id") or ""))
 
-    # Consumed BEFORE asking: if something fails afterwards, at worst one
-    # request is lost. The other way round it would ask in a loop, which is far
-    # worse.
-    storage.consume_pending(target)
+    if storage.has_pending(target, cfg["cooldown_minutes"]):
+        storage.save_window(paths, state)
+        # Consumed BEFORE asking: if something fails afterwards, at worst one
+        # request is lost. The other way round it would ask in a loop, which is
+        # far worse.
+        storage.consume_pending(target)
+        return ({
+            "decision": "block",
+            "reason": (
+                "baton: this session has just been compacted, so the compaction summary is "
+                "still fresh in your context and this is the best moment to bring the "
+                "handoff up to date.\n\n"
+                + (f"This session's active project is `{label}`; the handoff goes there, and "
+                   "the commands below already target it.\n\n" if label else "")
+                + "Write the handoff now following the `baton` skill: ask for the context with "
+                "`baton.py context`, draft ONLY the body into the draft file, and write it "
+                "with `baton.py write --mode <memory|continue>`. Distil the summary, do not "
+                "copy it: there is a budget and it is enforced.\n\n"
+                "When you are done, resume what you were doing or keep waiting for the user, "
+                "whichever applies. baton will not ask again for this compaction."
+            ),
+        }, f"handoff requested after compaction{f' for {label}' if label else ''}; "
+           f"{_describe(reading)}")
 
-    return ({
-        "decision": "block",
-        "reason": (
-            "baton: this session has just been compacted, so the compaction summary is "
-            "still fresh in your context and this is the best moment to bring the "
-            "handoff up to date.\n\n"
-            + (f"This session's active project is `{label}`; the handoff goes there, and "
-               "the commands below already target it.\n\n" if label else "")
-            + "Write the handoff now following the `baton` skill: ask for the context with "
-            "`baton.py context`, draft ONLY the body into the draft file, and write it "
-            "with `baton.py write --mode <memory|continue>`. Distil the summary, do not "
-            "copy it: there is a budget and it is enforced.\n\n"
-            "When you are done, resume what you were doing or keep waiting for the user, "
-            "whichever applies. baton will not ask again for this compaction."
-        ),
-    }, f"handoff requested after compaction{f' for {label}' if label else ''}")
+    payload, result = _window_request(target, label, cfg, reading, state)
+    storage.save_window(paths, state)
+    return payload, result
+
+
+def _tool_batch(entry: dict) -> dict:
+    """Tell the model, once per session, to wrap up instead of starting anew.
+
+    It runs after EVERY batch of tools, so it has its own lean path: no project
+    discovery and no log line unless it speaks -- one line per batch would push
+    everything worth reading out of a 200-line log. It never blocks and never
+    asks for the handoff: that is the Stop's job, at the end of the turn. What
+    it adds is the case a Stop cannot see: one long turn that crosses the mark
+    without ending.
+    """
+    if entry.get("agent_id"):
+        return {}
+    root = storage.project_root(entry.get("cwd") or os.getcwd())
+    cfg = config.load(root)
+    cw = cfg["context_window"]
+    if not (cw["enabled"] and cw["watch_at"]):
+        return {}
+    paths = storage.Paths(root, document_rel=cfg["document"])
+    if not (paths.document.is_file() or paths.window.is_file()):
+        return {}
+    state = storage.read_window(paths, entry.get("session_id") or "")
+    if state["warned"] or state["fired"]:
+        return {}
+    reading, state = _measure(entry, cfg, root, state)
+    if not reading.at_least(cw["watch_at"]) or reading.tokens < cw["min_tokens"]:
+        return {}
+    state["warned"] = True
+    storage.save_window(paths, state)
+    storage.log_event(paths, event="tool-batch",
+                      result=f"early warning at {reading.percent}%")
+    text = output.load_strings(cfg["language"])["auto_handoff"]["watch"]
+    return {"hookSpecificOutput": {"hookEventName": "PostToolBatch",
+                                   "additionalContext": text.format(percent=reading.percent)}}
 
 
 HANDLERS = {
@@ -206,6 +331,10 @@ def main() -> int:
     entry = _read_input()
     paths = None
     try:
+        if event == "tool-batch":
+            _emit(_tool_batch(entry))
+            return 0
+
         handler = HANDLERS.get(event)
         if handler is None:
             # An event we do not know is not our error: stay quiet.
