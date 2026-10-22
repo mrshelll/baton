@@ -29,7 +29,11 @@ gives baton a band and a panel so it can be used with clicks.
   compaction, open blockers, context past a threshold, none yet — and carries the
   action for the moment: `[ New session ]` runs `/clear`, `[ Write handoff ]` runs
   `/baton:baton`. No button has a key, so a digit typed into an empty prompt never
-  presses one.
+  presses one. Between a threshold and a handoff it shows whichever came last:
+  writing the handoff after the warning settles it, and a threshold crossed after
+  a compaction wrote the handoff replaces `✓ handoff ready`. `window.json` now
+  records when each threshold was announced; a record without those times keeps
+  the old order.
 - **The panel**: what the receipt showed, whole. Blockers first, then the next
   step and the state; decisions and traps folded; when and how the handoff was
   written, its size and the current context. Other projects under the same root

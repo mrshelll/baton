@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-562-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-577-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -376,6 +376,11 @@ Clicking the line opens the panel; `click → panel` sits on the right when it
 fits. `[ New session ]` runs `/clear` for you, as if you had typed it.
 `[ Write handoff ]` runs `/baton:baton`. No button has a key: a digit typed into
 an empty prompt never presses anything.
+
+A threshold and a handoff take turns: the band shows whichever came last.
+Writing the handoff after `⚠ context at 65 %` settles the warning, and a
+threshold crossed after a compaction wrote the handoff replaces
+`✓ handoff ready`.
 
 **The panel** is what the receipt shows, whole:
 
@@ -835,7 +840,7 @@ The band and the panel need a Claude Code that loads mods (built against
 ./tests/run.sh
 ```
 
-562 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+577 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case

@@ -254,6 +254,15 @@ test('header (threshold): the warning with its percent; writing is the main acti
   expect(await ui.find({ key: 'baton:pane:write' })).toMatchObject({ props: { variant: 'primary' } })
 })
 
+test('header: a threshold still reported under `normal` draws the normal header', async ($, on) => {
+  // baton.py keeps the crossing in `threshold` once a newer handoff answers it.
+  const w = world(on, { ...ES, state: 'normal', threshold: { percent: 70, tier: 65 } })
+  await load($, w)
+  const ui = await mount($)
+  expect(await ui.find({ type: 'Text', text: '✓ Traspaso guardado' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '⚠ Contexto al 70 %' })).toBeUndefined()
+})
+
 test('the pane\'s actions are the band\'s: /clear and /baton:baton, then a reload', async ($, on) => {
   const w = world(on, faces.ready(ES))
   await load($, w)

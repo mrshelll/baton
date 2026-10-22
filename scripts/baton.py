@@ -483,22 +483,38 @@ def _panel_target(args, root: Path, root_cfg, found):
 
 
 def _panel_threshold(root: Path, session: str):
-    """`{percent, tier}` once THIS session crossed a threshold, else None. The
-    window state lives at the session's root, not at the project shown."""
+    """`({percent, tier}, announced)` once THIS session crossed a threshold,
+    else `(None, None)`. `announced` is when the latest tier was announced, None
+    in a record written before that was kept. The window state lives at the
+    session's root, not at the project shown."""
     if not session:
-        return None
+        return None, None
     state = storage.read_window(storage.Paths(root), session)
     if not state["fired"]:
-        return None
+        return None, None
     percent = state["last"].get("percent")
     if not isinstance(percent, int) or isinstance(percent, bool):
         percent = None
-    return {"percent": percent, "tier": max(state["fired"])}
+    return {"percent": percent, "tier": max(state["fired"])}, storage.last_announced(state)
+
+
+def _parse_date(text):
+    """A handoff's `date`, as an aware datetime; None for anything else."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        when = datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
 def _panel_handoff(target, paths: storage.Paths, strings: dict, session: str):
-    """`(handoff, ready)` from the document on disk. Raises OSError when it
-    exists and cannot be read; the caller turns that into the error state."""
+    """`(handoff, ready, written)` from the document on disk. `written` is when
+    it was written -- this session's compaction note when it wrote it, the
+    document's date otherwise -- or None when neither can be read. Raises
+    OSError when it exists and cannot be read; the caller turns that into the
+    error state."""
     text = paths.document.read_text(encoding="utf-8", errors="replace")
     fields = document.read_fields(text)
     fingerprint = document.fingerprint(text, strings["context_section"])
@@ -518,7 +534,8 @@ def _panel_handoff(target, paths: storage.Paths, strings: dict, session: str):
         "written_by": "compaction" if by_compaction else "manual",
         "stale": bool(notice),
         "sections": output.panel_sections(text, strings),
-    }, ready
+    }, ready, ((storage.from_utc(mine.get("written_at")) if ready else None)
+               or _parse_date(fields.get("date")))
 
 
 def _panel(args) -> dict:
@@ -560,18 +577,27 @@ def _panel(args) -> dict:
     paths = storage.Paths(target.path, document_rel=cfg["document"])
     out["project"] = {"name": output.sanitize(target.path.name)[:output.MAX_NAME],
                       "path": str(target.path)}
-    out["threshold"] = _panel_threshold(root, session)
-    ready = False
+    out["threshold"], announced = _panel_threshold(root, session)
+    ready, written = False, None
     if paths.document.is_file():
         try:
-            out["handoff"], ready = _panel_handoff(target, paths, strings, session)
+            out["handoff"], ready, written = _panel_handoff(target, paths, strings, session)
         except OSError:
             out["error"] = output.sanitize(
                 strings["panel"]["error_read"].format(path=paths.document))
-    if ready:
-        out["state"] = "ready"
-    elif out["threshold"]:
+    # Between a threshold and a handoff the most recent one wins: a handoff
+    # written after the warning answers it, a threshold crossed after the
+    # handoff -- the compaction's included -- is news. A tie goes to the
+    # handoff. Without both times (a record from before they were kept, a
+    # date nobody can read) the old order stands: ready, then threshold.
+    if out["threshold"] and announced and written:
+        threshold_first = announced > written
+    else:
+        threshold_first = bool(out["threshold"]) and not ready
+    if threshold_first:
         out["state"] = "threshold"
+    elif ready:
+        out["state"] = "ready"
     elif out["error"]:
         out["state"] = "error"
     elif out["handoff"]:

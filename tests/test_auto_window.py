@@ -14,7 +14,7 @@ from pathlib import Path
 from tests.helpers import REPO_ROOT, BaseCase
 
 sys.path.insert(0, str(REPO_ROOT))
-from lib import storage  # noqa: E402
+from lib import output, storage  # noqa: E402
 
 MODEL = "claude-sonnet-4-6"   # 200k in the table: 1% is 2,000 tokens
 
@@ -142,6 +142,24 @@ class TestTheRequest(Base):
         self.assertEqual(rc, 0)
         self.assertIsNone(out)
 
+    def test_each_request_stamps_when_its_threshold_was_announced(self):
+        # The panel compares this with the handoff's date: whichever is newer
+        # is what the person sees.
+        self.configure(cooldown=0)
+        self.stop(66)
+        first = self.state()["announced"]
+        self.assertEqual(set(first), {"65"})
+        self.assertIsNotNone(storage.from_utc(first["65"]))
+        self.stop(86)
+        second = self.state()["announced"]
+        self.assertEqual(set(second), {"65", "85"})
+        self.assertEqual(second["65"], first["65"], "an older tier keeps its own time")
+
+    def test_a_threshold_held_by_the_cooldown_is_not_stamped(self):
+        self.stop(66)
+        self.stop(86)
+        self.assertEqual(set(self.state()["announced"]), {"65"})
+
 
 class TestWhatDoesNotCount(Base):
     def test_a_subagent_never_triggers_it(self):
@@ -211,9 +229,59 @@ class TestWithTheMod(Base):
 
     def test_an_announced_threshold_is_not_announced_again(self):
         self.stop(transcript=self.at_1m(70), baton_mod=True)
+        stamp = self.state()["announced"]["65"]
         self.stop(transcript=self.at_1m(72), baton_mod=True)
         self.assertNotIn("announced", self.log()[-1]["result"])
         self.assertEqual(self.state()["fired"], [65])
+        self.assertEqual(self.state()["announced"], {"65": stamp})
+
+    def test_the_announcement_is_stamped_with_the_mod_too(self):
+        self.stop(transcript=self.at_1m(70), baton_mod=True)
+        self.assertIsNotNone(storage.from_utc(self.state()["announced"]["65"]))
+
+    # -- what the panel shows: the most recent event wins ----------------------
+    def panel(self):
+        p = self.cli("panel", "--json", "--session", "s1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return json.loads(p.stdout)
+
+    def test_writing_the_handoff_after_the_announcement_settles_the_panel(self):
+        # The band said «contexto al 70 %, Escribir traspaso»; the person wrote
+        # it. Asking again would be asking for what was just done.
+        self.stop(transcript=self.at_1m(70), baton_mod=True)
+        self.assertEqual(self.panel()["state"], "threshold")
+        self.p.local.mkdir(parents=True, exist_ok=True)
+        self.p.draft.write_text("## State\nwritten after the warning\n", encoding="utf-8")
+        p = self.cli("write", "--mode", "memory")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        out = self.panel()
+        self.assertEqual(out["state"], "normal")
+        self.assertEqual(out["threshold"]["tier"], 65, "the crossing is still reported")
+
+    def test_a_threshold_after_the_compaction_handoff_is_announced(self):
+        # The compaction wrote the handoff (ready), the session went on past
+        # 85 %: Stop stays silent because of the mod, so the panel must say it.
+        session = {"session_id": "s1"}
+        self.run_hook_text("pre-compact", self.payload(
+            "PreCompact", trigger="auto", baton_mod=True, **session), env=self.env())
+        tag = output.COMPACTION_TAG
+        self.run_hook_text("post-compact", self.payload(
+            "PostCompact", trigger="auto", baton_mod=True, **session,
+            compact_summary=f'summary\n<{tag} mode="memory">\n## State\nfrom the summary\n'
+                            f"</{tag}>\n"), env=self.env())
+        self.assertEqual(self.panel()["state"], "ready")
+        # Minutes go by between the compaction and the next crossing.
+        data = json.loads(self.p.compact_request.read_text(encoding="utf-8"))
+        earlier = (datetime.now(timezone.utc) - timedelta(minutes=20)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        for note in data.get("sessions", {"_": data}).values():
+            note["written_at"] = note["requested_at"] = earlier
+        self.p.compact_request.write_text(json.dumps(data), encoding="utf-8")
+        _, out, _ = self.stop(transcript=self.at_1m(88), baton_mod=True)
+        self.assertIsNone(out, "the mod still keeps Stop from blocking")
+        panel = self.panel()
+        self.assertEqual(panel["state"], "threshold")
+        self.assertEqual(panel["threshold"]["tier"], 85)
 
     def test_without_the_mod_it_blocks_as_today(self):
         _, out, _ = self.stop(transcript=self.at_1m(70))
@@ -253,6 +321,7 @@ class TestWithTheCompaction(Base):
         self.stop(66)
         self.compact()
         self.assertEqual(self.state()["fired"], [])
+        self.assertEqual(self.state()["announced"], {})
 
 
 class TestCalibration(Base):

@@ -328,8 +328,8 @@ def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found):
     # A compaction moves the baseline -- 90% becomes 20% -- so the thresholds
     # already met describe an occupation that no longer exists.
     state = storage.read_window(paths, session)
-    if state["fired"] or state["warned"]:
-        storage.save_window(paths, dict(state, fired=[], warned=False))
+    if state["fired"] or state["warned"] or state["announced"]:
+        storage.save_window(paths, dict(state, fired=[], announced={}, warned=False))
 
     if written:
         if _mod_active(entry, cfg):
@@ -376,6 +376,10 @@ def _window_request(target: storage.Paths, label: str, cfg, reading,
     when the request goes out. Held back by the cooldown, it is tried again at
     the next turn: postponed, not lost.
 
+    Either way the tiers reached are stamped with the time they were
+    announced: the panel shows the threshold only while it is newer than the
+    handoff, so writing one after the warning settles it.
+
     With the mod (`mod`), the panel announces it instead: the threshold is
     marked, so the panel can read it from `window.json`, and nothing blocks.
     Neither the cooldown nor its stamp apply -- they protect the person from
@@ -391,6 +395,7 @@ def _window_request(target: storage.Paths, label: str, cfg, reading,
         return {}, f"silent: {measured}"
     reached = sorted(set(state["fired"]) | {t for t in cw["thresholds"] if t <= tier})
     if mod:
+        storage.stamp_announced(state, reached)
         state["fired"] = reached
         return {}, (f"threshold {tier} announced by the panel"
                     f"{f' for {label}' if label else ''}; {measured}")
@@ -398,6 +403,7 @@ def _window_request(target: storage.Paths, label: str, cfg, reading,
         return {}, f"silent: {measured}, {tier}% waits for the cooldown"
 
     again = bool(state["fired"])
+    storage.stamp_announced(state, reached)
     state["fired"] = reached
     storage.note_request(target)
 

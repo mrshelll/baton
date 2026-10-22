@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-562-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-577-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -376,6 +376,11 @@ Un clic en la línea abre el panel; `clic → panel` va a la derecha cuando cabe
 `[ Sesión nueva ]` ejecuta `/clear` por ti, como si lo hubieras escrito.
 `[ Escribir traspaso ]` ejecuta `/baton:baton`. Ningún botón tiene tecla: un
 dígito escrito en el prompt vacío nunca pulsa nada.
+
+Un umbral y un traspaso se turnan: la franja muestra el más reciente. Escribir
+el traspaso después de `⚠ contexto al 65 %` apaga el aviso, y un umbral cruzado
+después de que una compactación escribiera el traspaso reemplaza a
+`✓ traspaso listo`.
 
 **El panel** es lo que muestra el recibo, completo:
 
@@ -844,7 +849,7 @@ La franja y el panel necesitan un Claude Code que cargue mods (hecho sobre
 ./tests/run.sh
 ```
 
-562 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+577 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.

@@ -472,17 +472,27 @@ def read_window(paths: Paths, session_id: str) -> dict:
     """What the context trigger remembers, cleaned field by field.
 
     `marks` (the largest context seen per model) outlive the session: they are
-    what was learnt about the window. `fired` and `warned` belong to ONE session
-    and start over when the session changes -- a /clear asks again."""
+    what was learnt about the window. `fired`, `announced` and `warned` belong to
+    ONE session and start over when the session changes -- a /clear asks again.
+
+    `announced` maps a tier, as text, to when it was announced: the panel
+    compares it with the handoff's date to show whichever is newer. Records
+    written before it existed have none, and the panel keeps its old order."""
     data = read_json(paths.window)
     marks = data.get("marks")
     marks = ({k: v for k, v in marks.items() if isinstance(k, str) and _is_count(v) and v > 0}
              if isinstance(marks, dict) else {})
-    state = {"session": session_id, "marks": marks, "fired": [], "warned": False, "last": {}}
+    state = {"session": session_id, "marks": marks, "fired": [], "announced": {},
+             "warned": False, "last": {}}
     if data.get("session") == session_id:
         fired = data.get("fired")
         if isinstance(fired, list):
             state["fired"] = sorted({n for n in fired if _is_count(n)})
+        announced = data.get("announced")
+        if isinstance(announced, dict):
+            state["announced"] = {k: v for k, v in announced.items()
+                                  if isinstance(k, str) and k.isdigit()
+                                  and from_utc(v) is not None}
         state["warned"] = data.get("warned") is True
     if isinstance(data.get("last"), dict):
         state["last"] = data["last"]
@@ -491,3 +501,22 @@ def read_window(paths: Paths, session_id: str) -> dict:
 
 def save_window(paths: Paths, state: dict) -> None:
     write_json(paths.window, state)
+
+
+def stamp_announced(state: dict, tiers) -> None:
+    """Record, in `state`, when each tier in `tiers` not yet stamped was
+    announced. A tier keeps its first time: announcing 85 says nothing new
+    about 65."""
+    announced = dict(state.get("announced") or {})
+    now = now_utc()
+    for tier in tiers:
+        announced.setdefault(str(tier), now)
+    state["announced"] = announced
+
+
+def last_announced(state: dict):
+    """When the most recent of the session's fired tiers was announced, or None
+    when none of them carries a time."""
+    stamps = [from_utc(state.get("announced", {}).get(str(t))) for t in state.get("fired", [])]
+    stamps = [s for s in stamps if s is not None]
+    return max(stamps) if stamps else None

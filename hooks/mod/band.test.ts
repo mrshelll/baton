@@ -59,6 +59,18 @@ test('bandLine es: each face its line, its action and the hint, from the real te
   })
 })
 
+test('bandLine: the state decides, not the threshold baton.py still reports', () => {
+  // A handoff written after the warning comes back `normal` (or `ready`) with
+  // the crossing still in `threshold`: the band stops asking.
+  const crossed = { tier: 65, percent: 70 }
+  expect(bandLine({ ...faces.calm(faces.aged(ES, 'hace 2 h')), threshold: crossed }, WIDE)).toEqual({
+    text: 'baton · traspaso hace 2 h · memoria', tone: undefined, action: null, hint: 'clic → panel',
+  })
+  expect(bandLine({ ...faces.ready(ES), threshold: crossed }, WIDE)).toMatchObject({
+    text: 'baton · ✓ traspaso listo · recién', action: { kind: 'newSession' },
+  })
+})
+
 test('bandLine en: the same faces in English', () => {
   expect(bandLine(faces.ready(EN), WIDE)).toMatchObject({ text: 'baton · ✓ handoff ready · just now', action: { kind: 'newSession', label: 'New session' }, hint: 'click → panel' })
   expect(bandLine(faces.threshold(EN), WIDE)).toMatchObject({ text: 'baton · ⚠ context at 70 %', action: { kind: 'writeHandoff', label: 'Write handoff' } })

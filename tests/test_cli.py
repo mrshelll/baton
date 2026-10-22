@@ -559,17 +559,109 @@ class TestPanel(Base):
         self.assertNotIn("\x1b", out["error"])
 
     # -- precedence and where the pieces come from ------------------------------
-    def window(self, session="s1", fired=(65,), percent=70):
-        self.storage.save_window(self.storage.Paths(self.project), {
-            "session": session, "fired": list(fired), "last": {"percent": percent}})
+    def window(self, session="s1", fired=(65,), percent=70, announced=None):
+        state = {"session": session, "fired": list(fired), "last": {"percent": percent}}
+        if announced is not None:
+            state["announced"] = {str(max(fired)): self.ago(announced)}
+        self.storage.save_window(self.storage.Paths(self.project), state)
 
-    def test_ready_wins_over_a_threshold(self):
+    @staticmethod
+    def ago(minutes):
+        from datetime import datetime, timedelta, timezone
+        return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+
+    def backdate_compaction(self, minutes):
+        """The compaction happened `minutes` ago: what a real session sees when
+        it crosses a threshold later on."""
+        paths = self.storage.Paths(self.project)
+        data = self.json.loads(paths.compact_request.read_text(encoding="utf-8"))
+        for note in data.get("sessions", {"_": data}).values():
+            note["requested_at"] = note["written_at"] = self.ago(minutes)
+        paths.compact_request.write_text(self.json.dumps(data), encoding="utf-8")
+
+    def write_dated(self, minutes, body="## State\nx\n"):
+        """A handoff dated `minutes` ago, the way a past `write` left it."""
+        when = self.ago(minutes)
+        doc = self.project / ".baton" / "HANDOFF.md"
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text(f"---\nbaton: 1\nmode: memory\ndate: {when}\n---\n\n{body}",
+                       encoding="utf-8")
+
+    def test_a_threshold_announced_after_the_compaction_wins_over_ready(self):
+        self.init_git()
+        self.note_compaction("s1", self.write("## State\nx\n"))
+        self.backdate_compaction(20)
+        self.window(announced=1)
+        out = self.panel()
+        self.assertEqual(out["state"], "threshold")
+        self.assertEqual(out["threshold"], {"percent": 70, "tier": 65})
+
+    def test_a_compaction_after_the_threshold_is_ready(self):
+        self.init_git()
+        self.window(announced=20)
+        self.note_compaction("s1", self.write("## State\nx\n"))
+        out = self.panel()
+        self.assertEqual(out["state"], "ready")
+        self.assertEqual(out["threshold"], {"percent": 70, "tier": 65})
+
+    def test_a_handoff_written_after_the_threshold_is_normal(self):
+        # The band asked for it and the person wrote it: it stops asking.
+        self.init_git()
+        self.window(announced=20)
+        self.write("## State\nx\n")
+        out = self.panel()
+        self.assertEqual(out["state"], "normal")
+        self.assertEqual(out["threshold"], {"percent": 70, "tier": 65},
+                         "the crossing is still reported; the state says what is newer")
+
+    def test_a_threshold_announced_after_the_handoff_wins(self):
+        self.init_git()
+        self.write_dated(30)
+        self.window(announced=5)
+        self.assertEqual(self.panel()["state"], "threshold")
+
+    def test_the_latest_tier_announced_is_what_counts(self):
+        self.init_git()
+        self.write_dated(30)
+        self.storage.save_window(self.storage.Paths(self.project), {
+            "session": "s1", "fired": [65, 85], "last": {"percent": 88},
+            "announced": {"65": self.ago(60), "85": self.ago(5)}})
+        self.assertEqual(self.panel()["state"], "threshold")
+
+    def test_an_old_window_record_without_stamps_keeps_ready_first(self):
+        # Records written before 0.6.0 carry no time: today's order stands.
         self.init_git()
         self.note_compaction("s1", self.write("## State\nx\n"))
         self.window()
         out = self.panel()
         self.assertEqual(out["state"], "ready")
         self.assertEqual(out["threshold"], {"percent": 70, "tier": 65})
+
+    def test_an_old_window_record_without_stamps_keeps_the_threshold_over_normal(self):
+        self.init_git()
+        self.write("## State\nx\n")
+        self.window()
+        self.assertEqual(self.panel()["state"], "threshold")
+
+    def test_a_handoff_without_a_readable_date_keeps_todays_order(self):
+        self.init_git()
+        doc = self.project / ".baton" / "HANDOFF.md"
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text("---\nbaton: 1\nmode: memory\ndate: ayer\n---\n\n## State\nx\n",
+                       encoding="utf-8")
+        self.window(announced=60)
+        self.assertEqual(self.panel()["state"], "threshold")
+
+    def test_garbage_stamps_read_as_no_stamp(self):
+        self.init_git()
+        self.write("## State\nx\n")
+        for garbage in ({"65": 5}, {"65": "ayer"}, ["65"], "x", {"zz": self.ago(1)}):
+            with self.subTest(garbage=garbage):
+                self.storage.save_window(self.storage.Paths(self.project), {
+                    "session": "s1", "fired": [65], "last": {"percent": 70},
+                    "announced": garbage})
+                self.assertEqual(self.panel()["state"], "threshold")
 
     @unittest.skipIf(getattr(__import__("os"), "geteuid", lambda: 1)() == 0,
                      "root reads anything")

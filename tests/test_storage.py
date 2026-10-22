@@ -196,7 +196,7 @@ class TestWindowState(BaseCase):
 
     def test_a_first_read_is_a_clean_state_for_this_session(self):
         state = storage.read_window(self.p, "s1")
-        self.assertEqual(state, {"session": "s1", "marks": {}, "fired": [],
+        self.assertEqual(state, {"session": "s1", "marks": {}, "fired": [], "announced": {},
                                  "warned": False, "last": {}})
 
     def test_the_same_session_keeps_what_it_did(self):
@@ -216,13 +216,34 @@ class TestWindowState(BaseCase):
         self.assertEqual((fresh["session"], fresh["fired"], fresh["warned"]), ("s2", [], False))
         self.assertEqual(fresh["marks"], {"m": 300_000})
 
+    def test_announcement_times_belong_to_one_session(self):
+        state = storage.read_window(self.p, "s1")
+        state["fired"] = [65]
+        storage.stamp_announced(state, [65])
+        storage.save_window(self.p, state)
+        self.assertEqual(set(storage.read_window(self.p, "s1")["announced"]), {"65"})
+        self.assertEqual(storage.read_window(self.p, "s2")["announced"], {})
+
+    def test_the_last_announcement_is_the_newest_fired_tier_with_a_time(self):
+        state = {"fired": [65, 85], "announced": {"65": "2026-10-22T10:00:00Z",
+                                                  "85": "2026-10-22T11:00:00Z"}}
+        self.assertEqual(storage.last_announced(state),
+                         storage.from_utc("2026-10-22T11:00:00Z"))
+        self.assertEqual(storage.last_announced({"fired": [65, 85], "announced": {
+            "65": "2026-10-22T10:00:00Z"}}), storage.from_utc("2026-10-22T10:00:00Z"))
+        self.assertIsNone(storage.last_announced({"fired": [65], "announced": {}}))
+        self.assertIsNone(storage.last_announced({"fired": [], "announced": {
+            "65": "2026-10-22T10:00:00Z"}}), "a time for a tier no longer fired is old news")
+
     def test_garbage_inside_is_dropped_field_by_field(self):
         self.p.ensure_local()
         self.p.window.write_text(json.dumps({
             "session": "s1", "fired": [65, "x", True, 85], "warned": "yes",
             "marks": {"good": 300_000, "bad": "lots", "worse": True}, "last": 7,
+            "announced": {"65": "2026-10-22T10:00:00Z", "85": "ayer", "x": "2026-10-22T10:00:00Z"},
         }), encoding="utf-8")
         state = storage.read_window(self.p, "s1")
+        self.assertEqual(state["announced"], {"65": "2026-10-22T10:00:00Z"})
         self.assertEqual(state["fired"], [65, 85])
         self.assertIs(state["warned"], False)
         self.assertEqual(state["marks"], {"good": 300_000})
