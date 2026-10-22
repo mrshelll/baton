@@ -1,7 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 import type { PanelStrings } from '../../types'
 import { bandLine, compose, innerWidth, pending, section, type BandActions } from './band'
-import { current, currentView, currentViewed, hasStarted, markStarted, openMore, refresh, showOwn, showProject, STARTUP_WAIT_MS } from './data'
+import { current, currentView, currentViewed, openMore, refresh, showOwn, showProject, STARTUP_WAIT_MS } from './data'
 import { pane, type PaneActions } from './pane'
 
 /** The pane's id: the band's click, the auto-open and the render hook name it alike. */
@@ -25,12 +25,24 @@ async function isDrawn($: EngineInterface): Promise<boolean> {
 /** How often the startup's wait looks at the surfaces again. */
 const STARTUP_POLL_MS = 50
 
-/** True where the engine says no one is at a terminal: `-p` (`sdk-cli`) and the SDK (`sdk-*`). */
-async function isHeadless($: EngineInterface): Promise<boolean> {
+/**
+ * Whether this process's `session.start` has come: from then on `surfaces()` is
+ * the truth. A live flag, not `$.state`: every `get` of one dispatch reads one
+ * moment, so a SessionStart polling the state would never see it change.
+ */
+const boot = { started: false }
+
+/**
+ * Whether a terminal may still come: under the REPL (`cli`, seen on 2.1.308)
+ * or where the engine does not say. `-p` (`sdk-cli`), the SDK and any other
+ * host (`claude-vscode`) draw no terminal: no wait, and no mark (the receipt).
+ */
+async function mayGetTerminal($: EngineInterface): Promise<boolean> {
   try {
-    return (await $.env.get('CLAUDE_CODE_ENTRYPOINT'))?.startsWith('sdk') === true
+    const entrypoint = await $.env.get('CLAUDE_CODE_ENTRYPOINT')
+    return entrypoint === undefined || entrypoint === 'cli'
   } catch {
-    return false
+    return true
   }
 }
 
@@ -38,20 +50,22 @@ async function isHeadless($: EngineInterface): Promise<boolean> {
  * `isDrawn` for a SessionStart, which may open the process. There it comes
  * before `session.start` and before the terminal is among the surfaces (seen
  * on 2.1.308: the terminal follows in 100-250 ms; task-13-report.md), so with
- * no surface yet, no `session.start` and no sign of a headless run, it waits
- * for one, at most STARTUP_WAIT_MS. A `-p` run is never held: there
- * `session.start` comes only after SessionStart answers, and it draws nowhere.
+ * no surface yet, no `session.start` and the REPL's entrypoint (or none), it
+ * waits for one, at most STARTUP_WAIT_MS; a `session.start` or a surface that
+ * is no terminal ends the wait at the next look. A `-p` run is never held:
+ * there `session.start` comes only after SessionStart answers, and it draws
+ * nowhere.
  */
 async function isDrawnAtStart($: EngineInterface, signal?: AbortSignal): Promise<boolean> {
   try {
     const first = await $.session.surfaces()
     if (first.includes('terminal')) return true
-    if (first.length > 0 || (await hasStarted($)) || (await isHeadless($))) return false
+    if (first.length > 0 || boot.started || !(await mayGetTerminal($))) return false
     for (let waited = 0; waited < STARTUP_WAIT_MS; waited += STARTUP_POLL_MS) {
       await $.clock.sleep(STARTUP_POLL_MS, { signal })
       const now = await $.session.surfaces()
       if (now.includes('terminal')) return true
-      if (now.length > 0 || (await hasStarted($))) return false
+      if (now.length > 0 || boot.started) return false
     }
     return false
   } catch {
@@ -189,9 +203,10 @@ export const register: Register = on => {
     }
   })
 
-  // From here `surfaces()` is the truth: a SessionStart waiting for the terminal stops waiting.
+  // From here `surfaces()` is the truth: a SessionStart waiting for the
+  // terminal stops at its next look (`boot`).
   on('session.start', async ($, e, next) => {
-    await markStarted($).catch(() => undefined)
+    boot.started = true
     const started = await next(e)
     void refresh($)
     return started

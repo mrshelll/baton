@@ -138,8 +138,6 @@ declare module 'claude-code' {
       panel: PanelData | null
       /** When that load ended, in ms since the epoch (`$.clock.now()`). */
       loadedAt: number
-      /** Whether this process's `session.start` has come (SessionStart at startup comes before it). */
-      started: boolean
       /** What the pane shows; the band always shows `panel`. */
       view: PaneView
       /** The other project the pane last loaded; drawn while `view.project` is its rel. */

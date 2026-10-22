@@ -93,8 +93,9 @@ for (const surfaces of [['terminal'], ['terminal', 'mobile']] as const) {
 for (const surfaces of [['desktop'], ['vscode'], ['mobile'], []] as const) {
   test(`drawn on ${surfaces.join(' + ') || 'nothing (-p)'}, the mark is left off: nothing would replace the receipt`, async ($, on) => {
     world(on, surfaces)
-    // A -p run says so in the environment the engine sets for it (seen on 2.1.308).
-    mock.env(on, { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' })
+    // A -p run says so in the environment the engine sets for it (seen on 2.1.308);
+    // a desktop, vscode or mobile session needs no such sign: its surface says it.
+    if (surfaces.length === 0) mock.env(on, { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' })
     const seen = stdinOf(on)
     for (const raise of Object.values(RAISE)) await raise($)
     for (const name of Object.keys(RAISE)) {
@@ -165,6 +166,41 @@ test('a -p run: SessionStart is not held and gets no mark; session.start then sa
   expect(seen.SessionStart?.hook_event_name).toBe('SessionStart')
   expect('baton_mod' in (seen.SessionStart ?? {})).toBe(false)
   await $.session.start({ cwd: CWD, surface: null, isInteractive: false })
+})
+
+for (const surfaces of [['desktop'], ['vscode'], ['mobile']] as const) {
+  test(`${surfaces[0]} at startup, under the REPL's entrypoint: SessionStart is not held, and gets no mark`, async ($, on) => {
+    mock.env(on, { CLAUDE_CODE_ENTRYPOINT: 'cli' })
+    const w = world(on, surfaces)
+    const seen = stdinOf(on)
+    expect(await settledBy($.classic.SessionStart({ source: 'startup' }), w.clock)).toBe(true)
+    expect('baton_mod' in (seen.SessionStart ?? {})).toBe(false)
+  })
+}
+
+test('session.start with no terminal ends the wait at once, not at the timeout', async ($, on) => {
+  // The review's probe: under the REPL's entrypoint, nothing draws yet, and
+  // session.start arrives 150 ms in with no surface.
+  mock.env(on, { CLAUDE_CODE_ENTRYPOINT: 'cli' })
+  const w = world(on, [])
+  const seen = stdinOf(on)
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  const answered = $.classic.SessionStart({ source: 'startup' })
+  await w.clock.advance(150)
+  expect(await settledBy(answered, w.clock)).toBe(false)
+  await $.session.start({ cwd: CWD, surface: null, isInteractive: false })
+  // One look later, well before STARTUP_WAIT_MS.
+  await w.clock.advance(50)
+  expect(await settledBy(answered, w.clock)).toBe(true)
+  expect('baton_mod' in (seen.SessionStart ?? {})).toBe(false)
+})
+
+test('a host that is neither the REPL nor said (claude-vscode): no wait, no mark', async ($, on) => {
+  mock.env(on, { CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' })
+  const w = world(on, [])
+  const seen = stdinOf(on)
+  expect(await settledBy($.classic.SessionStart({ source: 'startup' }), w.clock)).toBe(true)
+  expect('baton_mod' in (seen.SessionStart ?? {})).toBe(false)
 })
 
 test('the SDK (sdk-ts) is headless too: no wait, no mark', async ($, on) => {
