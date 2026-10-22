@@ -6,7 +6,8 @@ process ALWAYS exits 0**. A corrupt handoff, a stdin that is not JSON or a full
 disk cannot stop a Claude Code session from starting. All the logic sits inside
 an `except BaseException` that degrades to a readable message -- except for
 `pre-compact`, whose stdout is plain text read by the summarizer: there it
-degrades to silence and the log line.
+degrades to silence and the log line -- and for `post-compact`, whose stdout is
+shown raw: there it degrades to one line of plain text.
 
 The event arrives as argv[1] (`session-start`, `pre-compact`, `post-compact`,
 `stop`, `tool-batch`) because hooks.json uses the `command: python3` + `args: [...]`
@@ -55,6 +56,32 @@ def _write_text(text: str) -> None:
 #: there must print nothing: whatever is printed reaches the summarizer as an
 #: instruction and is shown raw to the person.
 PLAIN_TEXT_EVENTS = ("pre-compact",)
+
+
+#: Last resort when not even the English template can be read.
+_POST_COMPACT_FAILED = ("baton: something failed after compacting ({error}); "
+                        "the session continues normally.")
+
+
+def _post_compact_failure(cfg, exc: BaseException) -> str:
+    """The one line `post-compact` prints when something unexpected breaks.
+
+    Claude Code shows that stdout raw, so a JSON `systemMessage` would reach
+    the person verbatim. Only the exception's type goes out -- the message may
+    span lines and carries paths; the log keeps it whole. The configured
+    language when it can be read, English otherwise. Never raises."""
+    error = type(exc).__name__
+    language = cfg.get("language") if isinstance(cfg, dict) else None
+    for lang in (language, output.DEFAULT_LANGUAGE):
+        if not isinstance(lang, str):
+            continue
+        try:
+            line = output.load_strings(lang)["auto_handoff"]["failed"].format(error=error)
+        except Exception:  # noqa: BLE001 - a broken template falls back
+            continue
+        if isinstance(line, str) and line.strip():
+            return " ".join(line.split()) + "\n"
+    return _POST_COMPACT_FAILED.format(error=error) + "\n"
 
 
 def _emit(payload: dict) -> None:
@@ -501,7 +528,7 @@ HANDLERS = {
 def main() -> int:
     event = sys.argv[1] if len(sys.argv) > 1 else ""
     entry = _read_input()
-    paths = None
+    paths = cfg = None
     try:
         if event == "tool-batch":
             _emit(_tool_batch(entry))
@@ -537,8 +564,8 @@ def main() -> int:
             return 0
 
         payload, result = handler(entry, paths, cfg, root, found)
-        # `post-compact` answers in plain text too, but only on success: Claude
-        # Code shows its stdout raw. Its errors keep today's message.
+        # `post-compact` answers in plain text too: Claude Code shows its stdout
+        # raw, never parsed as JSON.
         if event in PLAIN_TEXT_EVENTS or isinstance(payload, str):
             _write_text(payload)
         else:
@@ -546,7 +573,9 @@ def main() -> int:
         storage.log_event(paths, event=event, result=result,
                           source=entry.get("source") or entry.get("trigger") or "")
     except BaseException as exc:  # noqa: BLE001 - degrading is the requirement
-        if event not in PLAIN_TEXT_EVENTS:
+        if event == "post-compact":
+            _write_text(_post_compact_failure(cfg, exc))
+        elif event not in PLAIN_TEXT_EVENTS:
             _emit({"systemMessage": (
                 f"baton: could not complete '{event}' ({type(exc).__name__}: {exc}). "
                 "The session continues normally."

@@ -97,6 +97,98 @@ class TestPreCompactSpeaksPlainText(BaseCase):
         self.assertIn("disk on fire", json.loads(last)["error"])
 
 
+class TestPostCompactFailsInOneLine(BaseCase):
+    """Claude Code shows `post-compact` stdout raw, never parsed as JSON: an
+    unexpected error there must read as one line of text, not as a JSON blob."""
+
+    def setUp(self):
+        super().setUp()
+        doc = self.project / ".baton" / "HANDOFF.md"
+        doc.parent.mkdir(parents=True)
+        doc.write_text("---\nbaton: 1\nmode: memory\n---\n## State\nx\n", encoding="utf-8")
+        spec = importlib.util.spec_from_file_location(
+            "baton_hook_under_test", REPO_ROOT / "hooks" / "baton_hook.py")
+        self.hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.hook)
+        # The person's own ~/.claude/baton.json must not decide the language.
+        home = mock.patch.dict("os.environ", {"HOME": self._tmp})
+        home.start()
+        self.addCleanup(home.stop)
+
+    def run_main(self, event, *patches):
+        def boom(*_):
+            raise RuntimeError("disk on fire\nsecond line")
+
+        stdin = io.StringIO(json.dumps(self.payload("PostCompact", trigger="auto")))
+        captured = io.StringIO()
+        with mock.patch.dict(self.hook.HANDLERS, {event: boom}), \
+                mock.patch.object(sys, "argv", ["baton_hook.py", event]), \
+                mock.patch.object(sys, "stdin", stdin), redirect_stdout(captured):
+            for p in patches:
+                p.start()
+            try:
+                rc = self.hook.main()
+            finally:
+                for p in patches:
+                    p.stop()
+        return rc, captured.getvalue()
+
+    def assert_one_plain_line(self, out):
+        self.assertTrue(out.strip(), "the person must be told something failed")
+        with self.assertRaises(json.JSONDecodeError, msg=f"looks like JSON: {out!r}"):
+            json.loads(out)
+        self.assertEqual(len(out.rstrip("\n").splitlines()), 1, out)
+        self.assertNotIn("{", out)
+
+    def test_an_exception_prints_one_plain_line_and_exits_zero(self):
+        rc, out = self.run_main("post-compact")
+        self.assertEqual(rc, 0)
+        self.assert_one_plain_line(out)
+        self.assertEqual(out.rstrip("\n"), self.hook.output.load_strings("en")[
+            "auto_handoff"]["failed"].format(error="RuntimeError"))
+        last = (self.project / ".baton" / "local" / "log.jsonl").read_text(
+            encoding="utf-8").strip().splitlines()[-1]
+        self.assertEqual(json.loads(last)["result"], "error")
+        self.assertIn("disk on fire", json.loads(last)["error"])
+
+    def test_the_line_speaks_the_configured_language(self):
+        cfg = self.project / ".claude" / "baton.json"
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(json.dumps({"language": "es"}), encoding="utf-8")
+        rc, out = self.run_main("post-compact")
+        self.assertEqual(rc, 0)
+        self.assert_one_plain_line(out)
+        self.assertEqual(out.rstrip("\n"), self.hook.output.load_strings("es")[
+            "auto_handoff"]["failed"].format(error="RuntimeError"))
+
+    def test_when_the_config_itself_blows_up_the_line_is_english(self):
+        def broken(*_, **__):
+            raise ValueError("corrupt config")
+
+        rc, out = self.run_main(
+            "post-compact", mock.patch.object(self.hook.config, "load", broken))
+        self.assertEqual(rc, 0)
+        self.assert_one_plain_line(out)
+        self.assertEqual(out.rstrip("\n"), self.hook.output.load_strings("en")[
+            "auto_handoff"]["failed"].format(error="ValueError"))
+
+    def test_when_no_template_loads_there_is_still_one_english_line(self):
+        def broken(*_, **__):
+            raise OSError("templates gone")
+
+        rc, out = self.run_main(
+            "post-compact", mock.patch.object(self.hook.output, "load_strings", broken))
+        self.assertEqual(rc, 0)
+        self.assert_one_plain_line(out)
+        self.assertIn("baton", out)
+        self.assertIn("RuntimeError", out)
+
+    def test_other_events_keep_their_json_message(self):
+        rc, out = self.run_main("stop")
+        self.assertEqual(rc, 0)
+        self.assertIn("could not complete 'stop'", json.loads(out)["systemMessage"])
+
+
 class TestHostileTranscripts(BaseCase):
     """In an ENABLED project, which is where the transcript actually gets read."""
 

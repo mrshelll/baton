@@ -117,7 +117,8 @@
     "watch": "baton: this session has used about {percent}% of its context window. Do not start a new task from here: finish the one in progress. baton will soon offer to write the handoff so the work can continue in a new session.",
     "notice_ask": "baton: context at {percent}% -- Claude will ask whether to write the handoff.",
     "notice_write": "baton: context at {percent}% -- Claude is writing the handoff.",
-    "ready": "baton: handoff ready. Type /clear to continue in a fresh session."
+    "ready": "baton: handoff ready. Type /clear to continue in a fresh session.",
+    "failed": "baton: something failed after compacting ({error}); the session continues normally."
   },
   "panel": {
     "_comment": "What baton's mod draws in the band and the panel. Reaches the mod as-is through `baton.py panel --json`; the mod fills in the {fields}.",

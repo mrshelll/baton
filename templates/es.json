@@ -118,7 +118,8 @@
     "watch": "baton: esta sesión ha consumido cerca del {percent}% de su ventana de contexto. No empieces una tarea nueva a partir de aquí: termina la que está en curso. baton ofrecerá pronto escribir el traspaso para seguir en una sesión nueva.",
     "notice_ask": "baton: contexto al {percent}% -- Claude te preguntará si escribe el traspaso.",
     "notice_write": "baton: contexto al {percent}% -- Claude está escribiendo el traspaso.",
-    "ready": "baton: traspaso listo. Escribe /clear para seguir en una sesión nueva."
+    "ready": "baton: traspaso listo. Escribe /clear para seguir en una sesión nueva.",
+    "failed": "baton: algo falló tras compactar ({error}); la sesión sigue con normalidad."
   },
   "panel": {
     "_comment": "Lo que dibuja el mod de baton en la franja y el panel. Llega al mod tal cual en `baton.py panel --json`; los {campos} los rellena el mod.",
