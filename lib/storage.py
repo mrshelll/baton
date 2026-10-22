@@ -419,30 +419,77 @@ def note_request(paths: Paths) -> None:
     write_json(paths.pending, data)
 
 
+#: How long a compaction note says "this session is ready to start over".
+COMPACT_NOTE_HOURS = 12
+
+
+def _note_age_ok(note: dict, max_age_hours: int) -> bool:
+    when = from_utc(note.get("requested_at"))
+    if when is None:
+        return False
+    age = (datetime.now(timezone.utc) - when).total_seconds()
+    return 0 <= age <= max_age_hours * 3600
+
+
+def compact_notes(paths: Paths) -> dict:
+    """Every session's compaction note, keyed by session id, cleaned.
+
+    One note per session: two sessions in one project compact on their own,
+    and the second one's PreCompact must not erase that the first one's handoff
+    is ready. A file in the single-note shape that preceded this reads as one
+    entry. A note filed under another session's key is garbage."""
+    data = read_json(paths.compact_request)
+    sessions = data.get("sessions")
+    if sessions is None and isinstance(data.get("session"), str):
+        sessions = {data["session"]: data}
+    if not isinstance(sessions, dict):
+        return {}
+    return {sid: note for sid, note in sessions.items()
+            if isinstance(sid, str) and isinstance(note, dict) and note.get("session") == sid}
+
+
+def _newest_written(notes: dict):
+    written = [(from_utc(n.get("written_at")), sid) for sid, n in notes.items()
+               if n.get("written") is True and from_utc(n.get("written_at")) is not None]
+    return max(written)[1] if written else None
+
+
+def _save_notes(paths: Paths, notes: dict) -> None:
+    write_json(paths.compact_request, {"sessions": notes})
+
+
 def note_compact_request(paths: Paths, session_id: str) -> None:
     """Record that this session's PreCompact asked the summarizer for the block.
 
     The SessionStart of `compact` runs before -- or alongside -- the PostCompact,
     so it cannot know whether the block came out. This note is what it can know:
-    that one was asked for, by which session. Overwrites any previous note."""
-    write_json(paths.compact_request,
-               {"session": session_id, "requested_at": now_utc(), "written": False})
+    that one was asked for, by which session. It replaces this session's
+    previous note, never another session's. Notes past their age are pruned
+    here, except the newest written one: it may still describe the handoff on
+    disk, and the panel reads who wrote it from there."""
+    notes = compact_notes(paths)
+    keep = _newest_written(notes)
+    notes = {sid: n for sid, n in notes.items()
+             if sid == keep or _note_age_ok(n, COMPACT_NOTE_HOURS)}
+    notes[session_id] = {"session": session_id, "requested_at": now_utc(), "written": False}
+    _save_notes(paths, notes)
 
 
 def mark_compact_written(paths: Paths, session_id: str, fingerprint: str) -> None:
     """Record on this session's note that the block came out and was written.
 
-    Only on a note that is this session's: another session's PreCompact may have
-    replaced it in the meantime, and marking that one would tell its SessionStart
-    a handoff exists that nobody wrote for it."""
-    data = read_json(paths.compact_request)
-    if not session_id or data.get("session") != session_id:
+    Only on a note that is this session's: marking another one would tell its
+    SessionStart a handoff exists that nobody wrote for it."""
+    notes = compact_notes(paths)
+    if not session_id or session_id not in notes:
         return
-    data.update({"written": True, "written_at": now_utc(), "fingerprint": fingerprint})
-    write_json(paths.compact_request, data)
+    notes[session_id].update({"written": True, "written_at": now_utc(),
+                              "fingerprint": fingerprint})
+    _save_notes(paths, notes)
 
 
-def read_compact_request(paths: Paths, session_id: str, max_age_hours: int = 12):
+def read_compact_request(paths: Paths, session_id: str,
+                         max_age_hours: int = COMPACT_NOTE_HOURS):
     """The note, only when it belongs to `session_id` and is recent; else None.
 
     An empty session id is no session: it would match any other note written
@@ -450,16 +497,10 @@ def read_compact_request(paths: Paths, session_id: str, max_age_hours: int = 12)
     which is today's behaviour."""
     if not session_id:
         return None
-    data = read_json(paths.compact_request)
-    if data.get("session") != session_id:
+    note = compact_notes(paths).get(session_id)
+    if note is None or not _note_age_ok(note, max_age_hours):
         return None
-    when = from_utc(data.get("requested_at"))
-    if when is None:
-        return None
-    age = (datetime.now(timezone.utc) - when).total_seconds()
-    if age < 0 or age > max_age_hours * 3600:
-        return None
-    return data
+    return note
 
 
 # --- automatic handoff by context usage -----------------------------------

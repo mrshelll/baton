@@ -164,7 +164,7 @@ class TestPreCompact(Base):
         self.assertIn('<baton-handoff mode=', out)
         self.assertIn("</baton-handoff>", out)
         self.assertFalse(out.lstrip().startswith("{"), "plain text, never JSON")
-        note = json.loads(storage.Paths(self.project).compact_request.read_text(encoding="utf-8"))
+        note = storage.read_compact_request(storage.Paths(self.project), "sesión 42")
         self.assertEqual(note["session"], "sesión 42")
         self.assertIs(note["written"], False)
         self.assertTrue(note["requested_at"])
@@ -232,8 +232,10 @@ class TestPreCompact(Base):
         first = self.precompact(session_id="a")[1]
         second = self.precompact(session_id="b")[1]
         self.assertEqual(first, second)
-        note = json.loads(storage.Paths(self.project).compact_request.read_text(encoding="utf-8"))
-        self.assertEqual(note["session"], "b")
+        # One note per session: b asking does not erase that a asked.
+        paths = storage.Paths(self.project)
+        self.assertEqual(storage.read_compact_request(paths, "b")["session"], "b")
+        self.assertEqual(storage.read_compact_request(paths, "a")["session"], "a")
 
 
 class TestCompactionInstruction(unittest.TestCase):
@@ -305,9 +307,10 @@ class BlockCase(Base):
         lines = [l for l in log.read_text(encoding="utf-8").splitlines() if l.strip()]
         return json.loads(lines[-1])["result"]
 
-    def request(self, where=None):
-        return json.loads(storage.Paths(where or self.project).compact_request
-                          .read_text(encoding="utf-8"))
+    def request(self, where=None, session="test-session"):
+        note = storage.read_compact_request(storage.Paths(where or self.project), session)
+        self.assertIsNotNone(note, f"no note for {session}")
+        return note
 
     def armed(self, where=None):
         p = storage.Paths(where or self.project).pending
@@ -409,6 +412,19 @@ class TestPostCompactWritesTheBlock(BlockCase):
         self.assertFalse(self.armed())
 
     # -- the mod speaks instead ------------------------------------------------
+    def test_another_sessions_precompact_leaves_this_sessions_ready_alone(self):
+        # Two sessions in one project: B starting a compaction must not turn
+        # A's «ready» back into «saved», nor its handoff into a manual one.
+        self.note()
+        self.post()
+        self.run_hook_text("pre-compact", self.payload(
+            "PreCompact", trigger="auto", session_id="session B"))
+        self.assertIs(self.request()["written"], True)
+        p = self.cli("panel", "--json", "--session", "test-session")
+        panel = json.loads(p.stdout)
+        self.assertEqual(panel["state"], "ready")
+        self.assertEqual(panel["handoff"]["written_by"], "compaction")
+
     def test_with_the_mod_it_writes_and_prints_nothing(self):
         self.note()
         rc, out, err = self.post(baton_mod=True)
@@ -435,7 +451,7 @@ class TestPostCompactWritesTheBlock(BlockCase):
         self.note(session="another session")
         _, out, _ = self.post()
         self.assert_fell_back(out)
-        self.assertIs(self.request()["written"], False)
+        self.assertIs(self.request(session="another session")["written"], False)
 
     def test_an_empty_session_id_is_no_session(self):
         self.note(session="")
@@ -659,6 +675,74 @@ class TestCompactRequest(BaseCase):
 
     def test_missing_file_reads_nothing(self):
         self.assertIsNone(storage.read_compact_request(self.paths(), "s1"))
+
+    # -- one note per session ------------------------------------------------------
+    @staticmethod
+    def hours_ago(hours):
+        return (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def test_two_sessions_keep_their_own_notes(self):
+        storage.note_compact_request(self.paths(), "s1")
+        storage.mark_compact_written(self.paths(), "s1", "abc123")
+        storage.note_compact_request(self.paths(), "s2")
+        one = storage.read_compact_request(self.paths(), "s1")
+        two = storage.read_compact_request(self.paths(), "s2")
+        self.assertEqual((one["written"], one["fingerprint"]), (True, "abc123"))
+        self.assertIs(two["written"], False)
+
+    def test_marking_one_session_leaves_the_others_note_alone(self):
+        storage.note_compact_request(self.paths(), "s1")
+        storage.note_compact_request(self.paths(), "s2")
+        storage.mark_compact_written(self.paths(), "s2", "def456")
+        self.assertIs(storage.read_compact_request(self.paths(), "s1")["written"], False)
+        self.assertIs(storage.read_compact_request(self.paths(), "s2")["written"], True)
+
+    def test_a_new_note_prunes_the_old_ones(self):
+        p = self.paths()
+        p.ensure_local()
+        p.compact_request.write_text(json.dumps({"sessions": {
+            "old": {"session": "old", "requested_at": self.hours_ago(13), "written": False},
+            "recent": {"session": "recent", "requested_at": self.hours_ago(1), "written": False},
+        }}), encoding="utf-8")
+        storage.note_compact_request(p, "s1")
+        self.assertEqual(set(storage.compact_notes(p)), {"recent", "s1"})
+
+    def test_the_newest_written_note_outlives_the_pruning(self):
+        # It is the one that can describe the document on disk: who wrote it
+        # does not expire with the session's readiness.
+        p = self.paths()
+        p.ensure_local()
+        p.compact_request.write_text(json.dumps({"sessions": {
+            "older": {"session": "older", "requested_at": self.hours_ago(30),
+                      "written": True, "written_at": self.hours_ago(30), "fingerprint": "a"},
+            "old": {"session": "old", "requested_at": self.hours_ago(20),
+                    "written": True, "written_at": self.hours_ago(20), "fingerprint": "b"},
+        }}), encoding="utf-8")
+        storage.note_compact_request(p, "s1")
+        self.assertEqual(set(storage.compact_notes(p)), {"old", "s1"})
+        self.assertIsNone(storage.read_compact_request(p, "old"), "still too old to be ready")
+
+    def test_a_note_in_the_single_note_shape_still_reads(self):
+        # What 0.6.0 builds before this change left on disk.
+        p = self.paths()
+        p.ensure_local()
+        p.compact_request.write_text(json.dumps(
+            {"session": "s1", "requested_at": storage.now_utc(), "written": True,
+             "written_at": storage.now_utc(), "fingerprint": "abc"}), encoding="utf-8")
+        self.assertEqual(storage.read_compact_request(p, "s1")["fingerprint"], "abc")
+        storage.note_compact_request(p, "s2")
+        self.assertEqual(set(storage.compact_notes(p)), {"s1", "s2"})
+
+    def test_garbage_among_the_notes_is_dropped(self):
+        p = self.paths()
+        p.ensure_local()
+        for garbage in ({"sessions": []}, {"sessions": {"s1": "x"}},
+                        {"sessions": {"s1": {"session": "s2", "requested_at": storage.now_utc()}}}):
+            with self.subTest(garbage=garbage):
+                p.compact_request.write_text(json.dumps(garbage), encoding="utf-8")
+                self.assertIsNone(storage.read_compact_request(p, "s1"))
+                storage.note_compact_request(p, "s3")
+                self.assertIsNotNone(storage.read_compact_request(p, "s3"))
 
 
 if __name__ == "__main__":

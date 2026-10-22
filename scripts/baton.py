@@ -520,8 +520,8 @@ def _panel_handoff(target, paths: storage.Paths, strings: dict, session: str):
     fingerprint = document.fingerprint(text, strings["context_section"])
     # Who wrote it is the note's business whatever session it belongs to; being
     # ready to start over is only this session's.
-    note = storage.read_json(paths.compact_request)
-    by_compaction = note.get("written") is True and note.get("fingerprint") == fingerprint
+    by_compaction = any(note.get("written") is True and note.get("fingerprint") == fingerprint
+                        for note in storage.compact_notes(paths).values())
     mine = storage.read_compact_request(paths, session) or {}
     ready = mine.get("written") is True and mine.get("fingerprint") == fingerprint
     notice = gitinfo.freshness(target.path, fields.get("date"), fields.get("branch", ""),

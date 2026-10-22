@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-589-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-596-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -855,7 +855,7 @@ La franja y el panel necesitan un Claude Code que cargue mods (hecho sobre
 ./tests/run.sh
 ```
 
-589 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+596 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.
