@@ -6,6 +6,10 @@
  * with a space in its path, a handoff written with `baton.py write`, and a
  * sub-project `sub/radar`. Python writes it with ASCII escapes; `String.raw`
  * keeps them, so this text is what `JSON.parse` meets in a session.
+ *
+ * Both samples' `band_*` strings lost their `baton · ` prefix when the
+ * templates did (the section's title says it now); checked against the real
+ * command's `strings` after that change.
  */
 export const SAMPLE = String.raw`
 {
@@ -77,13 +81,13 @@ export const SAMPLE = String.raw`
     }
   ],
   "strings": {
-    "band_normal": "baton \u00b7 handoff {age} \u00b7 {mode}",
-    "band_ready": "baton \u00b7 \u2713 handoff ready \u00b7 {age}",
-    "band_threshold": "baton \u00b7 \u26a0 context at {percent} %",
-    "band_none": "baton \u00b7 no handoff in this project",
-    "band_error": "baton \u00b7 \u26a0 could not read the handoff",
-    "band_pending": "baton \u00b7 \u26a0 {n} open items \u00b7 {age}",
-    "band_no_project": "baton \u00b7 no project loaded",
+    "band_normal": "handoff {age} \u00b7 {mode}",
+    "band_ready": "\u2713 handoff ready \u00b7 {age}",
+    "band_threshold": "\u26a0 context at {percent} %",
+    "band_none": "no handoff in this project",
+    "band_error": "\u26a0 could not read the handoff",
+    "band_pending": "\u26a0 {n} open items \u00b7 {age}",
+    "band_no_project": "no project loaded",
     "hint_open": "click \u2192 panel",
     "action_new_session": "New session",
     "action_write": "Write handoff",
@@ -197,14 +201,14 @@ export const SAMPLE_ES = String.raw`
     }
   ],
   "strings": {
-    "band_normal": "baton \u00b7 traspaso {age} \u00b7 {mode}",
-    "band_ready": "baton \u00b7 \u2713 traspaso listo \u00b7 {age}",
-    "band_threshold": "baton \u00b7 \u26a0 contexto al {percent} %",
-    "band_none": "baton \u00b7 sin traspaso en este proyecto",
-    "band_error": "baton \u00b7 \u26a0 no se pudo leer el traspaso",
-    "band_pending": "baton \u00b7 \u26a0 {n} pendientes \u00b7 {age}",
-    "band_pending_one": "baton \u00b7 \u26a0 1 pendiente \u00b7 {age}",
-    "band_no_project": "baton \u00b7 ning\u00fan proyecto cargado",
+    "band_normal": "traspaso {age} \u00b7 {mode}",
+    "band_ready": "\u2713 traspaso listo \u00b7 {age}",
+    "band_threshold": "\u26a0 contexto al {percent} %",
+    "band_none": "sin traspaso en este proyecto",
+    "band_error": "\u26a0 no se pudo leer el traspaso",
+    "band_pending": "\u26a0 {n} pendientes \u00b7 {age}",
+    "band_pending_one": "\u26a0 1 pendiente \u00b7 {age}",
+    "band_no_project": "ning\u00fan proyecto cargado",
     "hint_open": "clic \u2192 panel",
     "action_new_session": "Sesi\u00f3n nueva",
     "action_write": "Escribir traspaso",

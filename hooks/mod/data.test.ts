@@ -80,7 +80,7 @@ test('loadPanel hands back the JSON of baton.py panel as it came', async () => {
   expect(data.handoff?.sections.map(s => s.slug)).toEqual(['blockers', 'next', 'state', 'decisions', 'traps'])
   expect(data.handoff?.sections[1]?.items).toEqual(['• finish src/pay.ts:40'])
   expect(data.others).toEqual([{ name: 'radar', rel: 'sub/radar', where: 'sub/radar', mode: 'continue', age: '48 d ago' }])
-  expect(data.strings.band_normal).toBe('baton · handoff {age} · {mode}')
+  expect(data.strings.band_normal).toBe('handoff {age} · {mode}')
   expect(data.error).toBe(null)
   expect(logs).toEqual([])
 })
@@ -176,5 +176,5 @@ test('loadPanel never throws, even when the call itself throws at once or the lo
 
 test('the fallback is a PanelData of its own: version 1, in English, and says the load failed', () => {
   expect(FALLBACK_STRINGS.loadFailed.length > 0).toBe(true)
-  expect(FALLBACK_STRINGS.band_error).toBe('baton · ⚠ could not read the handoff')
+  expect(FALLBACK_STRINGS.band_error).toBe('⚠ could not read the handoff')
 })

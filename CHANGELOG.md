@@ -27,10 +27,10 @@ gives baton a band and a panel so it can be used with clicks.
   carries on with that project — its handoff, not the index — once, within 12
   hours, and only while it is still the active one; any other fresh start forgets
   the active project as before.
-- **The band**: one line always visible above the prompt, from a mod that ships
-  inside the plugin. It says how the handoff stands — saved, ready after a
-  compaction, open blockers, context past a threshold, none yet — and carries the
-  action for the moment: `[ New session ]` runs `/clear`, `[ Write handoff ]` runs
+- **The band**: a small box always visible above the prompt, titled `baton`, from
+  a mod that ships inside the plugin. Its line says how the handoff stands —
+  saved, ready after a compaction, open blockers, context past a threshold, none
+  yet — and carries the action for the moment: `[ New session ]` runs `/clear`, `[ Write handoff ]` runs
   `/baton:baton`. No button has a key, so a digit typed into an empty prompt never
   presses one. Between a threshold and a handoff it shows whichever came last:
   writing the handoff after the warning settles it, and a threshold crossed after
@@ -70,14 +70,15 @@ gives baton a band and a panel so it can be used with clicks.
   model turn, but whatever `PreCompact` prints reaches the summarizer, which is a
   model with the conversation in front of it. That is the lever this release
   uses.
-- **Next to `agents-panel`**: the line above the prompt is shared, and earlier
+- **Next to `agents-panel`**: the space above the prompt is shared, and earlier
   versions of `agents-panel` gave it up whole when something was drawn under
   them, so depending on load order their box disappeared. `agents-panel` 0.3.0
-  stacks with baton's line — its box above, baton below — and a `clear-questions`
-  card still comes first. baton's line stays under that card only when
-  `clear-questions` runs below baton; in the other order `clear-questions` 0.2.0
-  draws its card alone, and baton's line comes back once the question is
-  answered.
+  and baton share one box with a section each, both always visible — agents
+  first, baton second, a dim rule between them — in either load order. A
+  `clear-questions` card still comes first. baton's own box stays under that card
+  only when `clear-questions` runs below baton; in the other order
+  `clear-questions` 0.2.0 draws its card alone, and baton's box comes back once
+  the question is answered.
 
 ### Fixed
 - **An unexpected error after compacting showed up as raw JSON.** Claude Code

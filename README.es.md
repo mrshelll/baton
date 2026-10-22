@@ -366,17 +366,29 @@ Con el mod de baton en la terminal, el recibo pasa al panel, a continuación.
 ## La franja y el panel
 
 baton trae además un mod para la terminal de Claude Code, para usarlo con clics en
-vez de comandos: una línea siempre visible sobre el prompt —la franja— y un panel
-con el traspaso completo.
+vez de comandos: un recuadro pequeño siempre visible sobre el prompt —la franja— y
+un panel con el traspaso completo.
 
-| Cuándo | La franja dice | Botón |
+```
+╭──────────────────────────────────────────────────────────────────────╮
+│ baton                                                                │
+│ ✓ traspaso listo · recién   [ Sesión nueva ]            clic → panel │
+╰──────────────────────────────────────────────────────────────────────╯
+```
+
+Bajo el título `baton`, una línea dice cómo está el traspaso:
+
+| Cuándo | La línea dice | Botón |
 |---|---|---|
-| Normal | `baton · traspaso hace 2 h · memoria` | |
-| Tras escribirlo una compactación | `baton · ✓ traspaso listo · recién` | `[ Sesión nueva ]` |
-| Se cruzó un umbral | `baton · ⚠ contexto al 65 %` | `[ Escribir traspaso ]` |
-| El traspaso tiene bloqueos | `baton · ⚠ 2 pendientes · hace 3 h` | |
-| Aún no hay traspaso | `baton · sin traspaso en este proyecto` | `[ Escribir traspaso ]` |
-| No se puede leer el traspaso | `baton · ⚠ no se pudo leer el traspaso` | |
+| Normal | `traspaso hace 2 h · memoria` | |
+| Tras escribirlo una compactación | `✓ traspaso listo · recién` | `[ Sesión nueva ]` |
+| Se cruzó un umbral | `⚠ contexto al 65 %` | `[ Escribir traspaso ]` |
+| El traspaso tiene bloqueos | `⚠ 2 pendientes · hace 3 h` | |
+| Aún no hay traspaso | `sin traspaso en este proyecto` | `[ Escribir traspaso ]` |
+| No se puede leer el traspaso | `⚠ no se pudo leer el traspaso` | |
+
+En una terminal estrecha la línea conserva primero sus palabras: se va la pista,
+luego el botón, y solo entonces se corta la línea con `…`.
 
 Un clic en la línea abre el panel; `clic → panel` va a la derecha cuando cabe.
 `[ Sesión nueva ]` ejecuta `/clear` por ti, como si lo hubieras escrito.
@@ -452,18 +464,31 @@ recibo de más que ninguno. `"display": "panel"` en la config les dice lo mismo
 desde tu lado; úsalo solo con el mod, porque sin él pierdes el recibo y la
 pregunta del umbral.
 
-**Junto a otros mods.** La línea sobre el prompt es compartida. baton dibuja su
-línea debajo de lo que dibujaron los otros mods, y nada mientras hay una encuesta.
-[`agents-panel`](https://github.com/mrshelll/agents-panel) 0.3.0 se apila con
-ella: su recuadro arriba y la línea de baton debajo, en cualquier orden de carga.
-Las versiones anteriores ceden la franja entera cuando algo se dibuja debajo, así
-que según el orden de carga su recuadro desaparece: actualiza a 0.3.0. Una tarjeta
-de `clear-questions` sigue mandando: mientras hay una pregunta, `agents-panel` se
-aparta como siempre. Que la línea de baton siga ahí depende del orden en que
-corren los dos. Con `clear-questions` debajo de baton en la cadena, baton recibe
-la tarjeta y dibuja su línea debajo. En el otro orden, `clear-questions` 0.2.0
-devuelve su tarjeta sin dejar dibujar a los mods de debajo, así que la línea de
-baton desaparece mientras está la pregunta y vuelve cuando la respondes.
+**Junto a otros mods.** El espacio sobre el prompt es compartido, y baton no
+dibuja nada ahí mientras hay una encuesta.
+[`agents-panel`](https://github.com/mrshelll/agents-panel) 0.3.0 y baton comparten
+un recuadro con una sección cada uno, las dos siempre visibles: agentes primero,
+baton después y una raya tenue entre ellas, en cualquier orden de carga.
+
+```
+╭──────────────────────────────────────────────────────────────────────╮
+│ agentes                                                              │
+│ … las filas de agents-panel …                                        │
+│ ──────────────────────────────────────────────────────────────────── │
+│ baton                                                                │
+│ ✓ traspaso listo · recién   [ Sesión nueva ]            clic → panel │
+╰──────────────────────────────────────────────────────────────────────╯
+```
+
+Las versiones anteriores de `agents-panel` ceden la franja entera cuando algo se
+dibuja debajo, así que según el orden de carga su recuadro desaparece: actualiza a
+0.3.0. Una tarjeta de `clear-questions` sigue mandando: mientras hay una pregunta,
+`agents-panel` se aparta como siempre. Que el recuadro de baton siga ahí depende
+del orden en que corren los dos. Con `clear-questions` debajo de baton en la
+cadena, baton recibe la tarjeta y dibuja su propio recuadro debajo. En el otro
+orden, `clear-questions` 0.2.0 devuelve su tarjeta sin dejar dibujar a los mods
+de debajo, así que el recuadro de baton desaparece mientras está la pregunta y
+vuelve cuando la respondes.
 
 ## Instalación
 
@@ -822,9 +847,10 @@ un paso después de sus hooks. Quita esas líneas al terminar.
 
 **7. La franja y el panel.** Con el mod cargado, abre una sesión en una terminal
 de al menos 144 columnas, en un proyecto cuyo traspaso tenga bloqueos. La franja
-dice `baton · ⚠ N pendientes` sobre el prompt, sin recibo arriba, y el panel se
-abre solo al lado de la conversación, con los bloqueos primero. Con `agents-panel`
-cargado también, su recuadro queda encima de la línea de baton. Ejecuta
+dice `⚠ N pendientes` bajo el título `baton` sobre el prompt, sin recibo arriba, y
+el panel se abre solo al lado de la conversación, con los bloqueos primero. Con
+`agents-panel` cargado también, los dos comparten un recuadro: agentes arriba,
+baton debajo. Ejecuta
 `/compact`: la franja pasa a `✓ traspaso listo` con `[ Sesión nueva ]`, y al
 pulsarlo empieza una sesión nueva que vuelve a abrir el panel si quedan bloqueos.
 

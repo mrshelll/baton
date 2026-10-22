@@ -445,7 +445,7 @@ test('opening another project: baton › name and Volver; its handoff, loaded wi
   expect(await ui.find({ key: 'baton:project:0' })).toBeUndefined()
   // The band keeps to the session's own project.
   const band = await $.ui.mount({ plugin: 'baton', surface: 'terminal', component: 'AbovePrompt', requestId: 'above-prompt', props: BAND_PROPS as never })
-  expect(await band.find({ key: 'baton:open' })).toMatchObject({ text: 'baton · ⚠ 2 pendientes · recién' })
+  expect(await band.find({ key: 'baton:open' })).toMatchObject({ text: '⚠ 2 pendientes · recién' })
 })
 
 test('Volver reloads the session\'s own panel and draws it again', async ($, on) => {

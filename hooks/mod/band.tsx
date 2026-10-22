@@ -2,11 +2,28 @@ import type { ElementTable, RenderElement } from 'claude-code'
 import type { PanelData, PanelStrings } from '../../types'
 
 /**
- * The band: one row above the prompt that baton always draws on the terminal,
+ * The band: baton's section above the prompt, always drawn on the terminal,
  * saying where the handoff stands, with the action of the moment and a way into
- * the panel. Every word comes from `data.strings` (the project's language);
- * this file only picks, fills and fits them.
+ * the panel. Every word of the status comes from `data.strings` (the project's
+ * language); this file only picks, fills and fits them.
+ *
+ * The section sits in a frame shared with agents-panel (the spec's «Adenda
+ * (2026-10-22)»): each mod draws a Box keyed `<mod>:section`, and whichever hook
+ * runs last rebuilds the one frame, keyed `band:frame`, from the sections
+ * beneath plus its own, in a fixed order. agents-panel's `hooks/views/frame.tsx`
+ * draws the same tree.
  */
+
+/** The shared frame's key: what a hook looks for beneath to merge into. */
+export const FRAME_KEY = 'band:frame'
+/** baton's section in the frame. */
+export const SECTION_KEY = 'baton:section'
+/** agents-panel's, which goes first. */
+const AGENTS_SECTION_KEY = 'agents-panel:section'
+/** What the frame takes from the width: one border and one space of padding a side. */
+export const FRAME = 4
+/** The section's title: the product's name, the same in every language. */
+const TITLE = 'baton'
 
 /** Between the line, its button and the hint, as the spec's table spaces them. */
 export const GAP = 3
@@ -126,29 +143,32 @@ export function bandLine(data: PanelData, columns: number): BandModel {
 const ACTION_KEYS: Record<BandAction, string> = { newSession: 'baton:new-session', writeHandoff: 'baton:write' }
 
 /**
- * The band drawn: a row whose root is the Box keyed `baton:band`, the mark
- * other mods read as "a line that stacks", not a card to yield to. The line
- * is a Button that opens the panel; the action's own Button follows it.
+ * baton's section: a borderless column keyed `baton:section`, its title first
+ * (bold, `claude`), then the status row. The line is a Button that opens the
+ * panel; the action's own Button follows it; the hint sits at the right.
  */
-export function band(t: ElementTable<'terminal'>, m: BandModel, act: BandActions): RenderElement {
+export function section(t: ElementTable<'terminal'>, m: BandModel, act: BandActions): RenderElement {
   const { Box, Button, Text } = t
   const action = m.action
   return (
-    <Box key="baton:band" flexDirection="row" justifyContent="space-between" gap={GAP}>
-      <Box flexDirection="row" gap={GAP}>
-        <Button key="baton:open" label={m.text} plain onPress={() => act.openPanel()}>
-          <Text wrap="truncate-end" color={m.tone} hover={{ scope: 'baton:open', underline: true }}>{m.text}</Text>
-        </Button>
-        {action && (
-          <Button
-            key={ACTION_KEYS[action.kind]}
-            label={action.label}
-            variant="primary"
-            onPress={() => (action.kind === 'newSession' ? act.newSession() : act.writeHandoff())}
-          />
-        )}
+    <Box key={SECTION_KEY} flexDirection="column">
+      <Text wrap="truncate-end" bold color="claude">{TITLE}</Text>
+      <Box flexDirection="row" justifyContent="space-between" gap={GAP}>
+        <Box flexDirection="row" gap={GAP}>
+          <Button key="baton:open" label={m.text} plain onPress={() => act.openPanel()}>
+            <Text wrap="truncate-end" color={m.tone} hover={{ scope: 'baton:open', underline: true }}>{m.text}</Text>
+          </Button>
+          {action && (
+            <Button
+              key={ACTION_KEYS[action.kind]}
+              label={action.label}
+              variant="primary"
+              onPress={() => (action.kind === 'newSession' ? act.newSession() : act.writeHandoff())}
+            />
+          )}
+        </Box>
+        {m.hint !== null && <Text wrap="truncate-end" dimColor>{m.hint}</Text>}
       </Box>
-      {m.hint !== null && <Text wrap="truncate-end" dimColor>{m.hint}</Text>}
     </Box>
   )
 }
@@ -156,17 +176,83 @@ export function band(t: ElementTable<'terminal'>, m: BandModel, act: BandActions
 /**
  * True when nothing beneath drew the band: nothing, or the engine's own node
  * (`{ type: 'engine', ref }`), which is what `next(e)` resolves to when no plugin drew.
- * Anything else is another plugin's tree. The same definition as agents-panel 0.2.0's.
+ * Anything else is another plugin's tree. The same definition as agents-panel's.
  */
 export function isEmptyBand(tree: unknown): boolean {
   return tree === null || tree === undefined || (typeof tree === 'object' && (tree as { type?: unknown }).type === 'engine')
 }
 
+/** The frame's width less its border and padding: what a section's rows have. Never below 0. */
+export function innerWidth(bodyColumns: number): number {
+  return Number.isFinite(bodyColumns) ? Math.max(0, Math.floor(bodyColumns) - FRAME) : 0
+}
+
+type Node = { type?: unknown; props?: { key?: unknown }; children?: unknown }
+
+function keyOf(node: unknown): string | undefined {
+  if (typeof node !== 'object' || node === null) return undefined
+  const key = (node as Node).props?.key
+  return typeof key === 'string' ? key : undefined
+}
+
+function isBox(node: unknown): boolean {
+  return typeof node === 'object' && node !== null && (node as Node).type === 'Box'
+}
+
+/** A section: a Box keyed `<name>:section`, with a name before the suffix. */
+function isSection(node: unknown): node is RenderElement {
+  const key = keyOf(node)
+  return isBox(node) && key !== undefined && key.length > ':section'.length && key.endsWith(':section')
+}
+
 /**
- * baton's line with what was drawn beneath it: alone over an empty band, else
- * a column with theirs above and baton's below. The column takes no key: only
- * baton's own Box carries `baton:band`.
+ * The sections of a shared frame, in the order they sit; its dividers and
+ * anything else dropped. Null when the tree is no frame (nothing, the engine's
+ * node, a card, a column).
  */
-export function stack(below: RenderElement, mine: RenderElement): RenderElement {
-  return isEmptyBand(below) ? mine : { type: 'Box', props: { flexDirection: 'column' }, children: [below, mine] }
+export function sectionsOf(tree: unknown): RenderElement[] | null {
+  if (!isBox(tree) || keyOf(tree) !== FRAME_KEY) return null
+  const children = (tree as Node).children
+  return Array.isArray(children) ? children.filter(isSection) : []
+}
+
+/** The fixed places: agents-panel's section first, baton's second, any other after them. */
+const RANK: Readonly<Record<string, number>> = { [AGENTS_SECTION_KEY]: 0, [SECTION_KEY]: 1 }
+
+/**
+ * `theirs` without any baton section (a stale one is replaced, never doubled),
+ * plus `mine`, in the fixed order; others keep the order they came in (the sort
+ * is stable).
+ */
+export function merged(theirs: readonly RenderElement[], mine: RenderElement): RenderElement[] {
+  const all = [...theirs.filter(s => keyOf(s) !== SECTION_KEY), mine]
+  return all.sort((a, b) => (RANK[keyOf(a) ?? ''] ?? 2) - (RANK[keyOf(b) ?? ''] ?? 2))
+}
+
+/**
+ * The shared frame: a dim round border with one space of padding a side, the
+ * sections in a column, a dim `─` row of the inner width between two of them.
+ * The divider's props and text are agents-panel's, so both build one tree.
+ */
+export function frame(t: ElementTable<'terminal'>, sections: readonly RenderElement[], inner: number): RenderElement {
+  const { Box, Text } = t
+  const rule = '─'.repeat(Math.max(1, inner))
+  return (
+    <Box key={FRAME_KEY} borderStyle="round" borderColor="claude" borderDimColor flexDirection="column" paddingX={1}>
+      {sections.flatMap((s, i) => (i === 0 ? [s] : [<Text wrap="truncate-end" dimColor>{rule}</Text>, s]))}
+    </Box>
+  )
+}
+
+/**
+ * baton's section with what was drawn beneath it: over nothing, a frame with
+ * baton's section alone; over a shared frame, that frame rebuilt with baton's
+ * section in its place; under any other tree (a clear-questions card), a column
+ * with theirs above and baton's own frame below. The column takes no key.
+ */
+export function compose(t: ElementTable<'terminal'>, below: RenderElement, mine: RenderElement, inner: number): RenderElement {
+  if (isEmptyBand(below)) return frame(t, [mine], inner)
+  const theirs = sectionsOf(below)
+  if (theirs !== null) return frame(t, merged(theirs, mine), inner)
+  return { type: 'Box', props: { flexDirection: 'column' }, children: [below, frame(t, [mine], inner)] }
 }

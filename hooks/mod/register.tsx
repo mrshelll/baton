@@ -1,6 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 import type { PanelStrings } from '../../types'
-import { band, bandLine, pending, stack, type BandActions } from './band'
+import { bandLine, compose, innerWidth, pending, section, type BandActions } from './band'
 import { current, currentView, currentViewed, hasStarted, markStarted, openMore, refresh, showOwn, showProject, STARTUP_WAIT_MS } from './data'
 import { pane, type PaneActions } from './pane'
 
@@ -149,18 +149,21 @@ async function openOnItsOwn($: EngineInterface, source: string): Promise<void> {
 
 export const register: Register = on => {
   // The band, on the terminal alone. What was drawn beneath comes first: a
-  // survey keeps the band to itself; otherwise baton's line goes alone or
-  // under the others'. A band that cannot draw leaves what is beneath (`next`
-  // already ran and is never called again).
+  // survey keeps the band to itself; otherwise baton's section goes in the
+  // shared frame, alone, merged into the frame beneath, or in its own frame
+  // under another tree (`compose`). It fits the frame's inner width. A band
+  // that cannot draw leaves what is beneath (`next` already ran and is never
+  // called again).
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.surface !== 'terminal') return next(e)
     const below = await next(e)
     if (e.props.hasSurvey) return below
     try {
       const data = await current($)
-      if (data === null || !(e.props.maxRows >= 1) || !(e.props.bodyColumns >= 1)) return below
-      const mine = band($.ui.resolve(e), bandLine(data, e.props.bodyColumns), bandActions($, data.strings))
-      return stack(below, mine)
+      const inner = innerWidth(e.props.bodyColumns)
+      if (data === null || !(e.props.maxRows >= 1) || !(inner >= 1)) return below
+      const t = $.ui.resolve(e)
+      return compose(t, below, section(t, bandLine(data, inner), bandActions($, data.strings)), inner)
     } catch {
       return below
     }

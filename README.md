@@ -366,17 +366,29 @@ With baton's mod in the terminal, the receipt moves to the panel, next.
 ## The band and the panel
 
 baton also brings a mod for Claude Code's terminal, so it can be used with clicks
-instead of commands: a line always visible above the prompt — the band — and a
-panel with the whole handoff.
+instead of commands: a small box always visible above the prompt — the band — and
+a panel with the whole handoff.
 
-| When | The band reads | Button |
+```
+╭──────────────────────────────────────────────────────────────────────╮
+│ baton                                                                │
+│ ✓ handoff ready · just now   [ New session ]           click → panel │
+╰──────────────────────────────────────────────────────────────────────╯
+```
+
+Under the title `baton`, one line says how the handoff stands:
+
+| When | The line reads | Button |
 |---|---|---|
-| Normal | `baton · handoff 2 h ago · memory` | |
-| After a compaction wrote it | `baton · ✓ handoff ready · just now` | `[ New session ]` |
-| A threshold was crossed | `baton · ⚠ context at 65 %` | `[ Write handoff ]` |
-| The handoff has blockers | `baton · ⚠ 2 open items · 3 h ago` | |
-| No handoff yet | `baton · no handoff in this project` | `[ Write handoff ]` |
-| The handoff cannot be read | `baton · ⚠ could not read the handoff` | |
+| Normal | `handoff 2 h ago · memory` | |
+| After a compaction wrote it | `✓ handoff ready · just now` | `[ New session ]` |
+| A threshold was crossed | `⚠ context at 65 %` | `[ Write handoff ]` |
+| The handoff has blockers | `⚠ 2 open items · 3 h ago` | |
+| No handoff yet | `no handoff in this project` | `[ Write handoff ]` |
+| The handoff cannot be read | `⚠ could not read the handoff` | |
+
+On a narrow terminal the line keeps its words first: the hint goes, then the
+button, and only then is the line cut with `…`.
 
 Clicking the line opens the panel; `click → panel` sits on the right when it
 fits. `[ New session ]` runs `/clear` for you, as if you had typed it.
@@ -450,18 +462,30 @@ receipt too many beats none. `"display": "panel"` in the config tells them the
 same from your side; use it only with the mod, because without it you lose the
 receipt and the threshold ask.
 
-**Next to other mods.** The line above the prompt is shared. baton draws its line
-under whatever the other mods drew, and nothing while a survey is up.
-[`agents-panel`](https://github.com/mrshelll/agents-panel) 0.3.0 stacks with it:
-its box above, baton's line below, in either load order. Earlier versions give
-up the whole band when something is drawn under them, so depending on load order
-their box disappears: update to 0.3.0. A `clear-questions` card still comes
-first: while a question is up, `agents-panel` steps aside as it always did.
-Whether baton's line stays depends on the order the two run in. With
-`clear-questions` below baton in the chain, baton gets the card and draws its
-line under it. In the other order, `clear-questions` 0.2.0 returns its card
-without letting the mods below it draw, so baton's line is gone while the
-question is up and comes back once it is answered.
+**Next to other mods.** The space above the prompt is shared, and baton draws
+nothing there while a survey is up.
+[`agents-panel`](https://github.com/mrshelll/agents-panel) 0.3.0 and baton share
+one box with a section each, both always visible: agents first, baton second, a
+dim rule between them, in either load order.
+
+```
+╭──────────────────────────────────────────────────────────────────────╮
+│ agents                                                               │
+│ … agents-panel's rows …                                              │
+│ ──────────────────────────────────────────────────────────────────── │
+│ baton                                                                │
+│ ✓ handoff ready · just now   [ New session ]           click → panel │
+╰──────────────────────────────────────────────────────────────────────╯
+```
+
+Earlier versions of `agents-panel` give up the whole band when something is drawn
+under them, so depending on load order their box disappears: update to 0.3.0. A
+`clear-questions` card still comes first: while a question is up, `agents-panel`
+steps aside as it always did. Whether baton's box stays depends on the order the
+two run in. With `clear-questions` below baton in the chain, baton gets the card
+and draws its own box under it. In the other order, `clear-questions` 0.2.0
+returns its card without letting the mods below it draw, so baton's box is gone
+while the question is up and comes back once it is answered.
 
 ## Install
 
@@ -813,9 +837,10 @@ hooks. Remove those lines when you are done.
 
 **7. The band and the panel.** With the mod loaded, open a session in a terminal
 at least 144 columns wide, in a project whose handoff has blockers. The band
-reads `baton · ⚠ N open items` above the prompt, with no receipt at the top, and
-the panel opens on its own beside the conversation, blockers first. With
-`agents-panel` loaded too, its box sits above baton's line. Run `/compact`: the
+reads `⚠ N open items` under the title `baton` above the prompt, with no receipt
+at the top, and the panel opens on its own beside the conversation, blockers
+first. With `agents-panel` loaded too, both share one box: agents above, baton
+below. Run `/compact`: the
 band turns to `✓ handoff ready` with `[ New session ]`, and pressing it starts a
 fresh session that opens the panel again if blockers are left.
 
