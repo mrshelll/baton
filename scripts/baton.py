@@ -51,17 +51,6 @@ class Ctx:
     found: "projects.Discovery"
 
 
-def _below(root, here) -> bool:
-    """`here` is strictly under `root`. False on any doubt, so an odd path can
-    only ever cost the old behaviour, never a spurious question."""
-    try:
-        root = Path(root).resolve(strict=False)
-        here = Path(here).resolve(strict=False)
-        return here != root and here.is_relative_to(root)
-    except (OSError, ValueError):
-        return False
-
-
 def _resolve(args, allow_new: bool = False):
     """Root, target, config, paths and strings: the preamble to every subcommand.
 
@@ -81,26 +70,10 @@ def _resolve(args, allow_new: bool = False):
     ask_where = False
 
     if name is None:
-        active = projects.read_active(root, found)
-        if active is not None:
-            target = projects.Target(root, active)
-        elif _below(root, here) and not root_enabled:
-            # Cold start from inside a subfolder. A session standing below a root
-            # that has no handoff of its own is the one case where the folder the
-            # user opened matters more than anything on disk -- and where getting
-            # it wrong plants a .baton/ nobody wanted, which then makes that
-            # folder a root forever. Ask, once: afterwards the document exists and
-            # everything resolves on its own.
-            target, ask_where = None, True
-        elif not found.projects:
-            target = projects.Target(root)   # the ordinary single-project case
-        else:
-            # Not even when there is exactly one. Being the only project on disk
-            # is not evidence that THIS handoff is that project's: a session at
-            # the root working on a folder that has no handoff yet would have its
-            # content written over the one project that does. The count does not
-            # change what is being decided, which is whose handoff gets replaced.
-            target = None
+        # The same rule the unattended hooks follow; here a None becomes a
+        # question on stderr instead of silence.
+        target, why = projects.writable_target(root, found, here, root_enabled)
+        ask_where = why == "ask_where"
         candidates = list(found.projects)
     else:
         target, candidates = projects.resolve(root, found, name, allow_new=allow_new)

@@ -238,6 +238,50 @@ def resolve(root, discovery: Discovery, name, allow_new: bool = False):
     return None, everything
 
 
+def _below(root, here) -> bool:
+    """`here` is strictly under `root`. False on any doubt, so an odd path can
+    only ever cost the old behaviour, never a spurious question."""
+    try:
+        root = Path(root).resolve(strict=False)
+        here = Path(here).resolve(strict=False)
+        return here != root and here.is_relative_to(root)
+    except (OSError, ValueError):
+        return False
+
+
+def writable_target(root: Path, found: Discovery, here: Path,
+                    root_enabled: bool) -> tuple[Target | None, str]:
+    """Where a handoff may be written when nobody named a project.
+
+    Returns `(target, why)`, `why` one of "active", "root", "ask_where",
+    "ambiguous"; the target is None for the last two. Prints nothing: the CLI
+    turns a None into a question on stderr, a hook -- which cannot ask -- into
+    not writing at all. One function for both, so they cannot disagree on whose
+    handoff gets replaced.
+    """
+    root = Path(root)
+    active = read_active(root, found)
+    if active is not None:
+        return Target(root, active), "active"
+    if _below(root, here) and not root_enabled:
+        # Cold start from inside a subfolder. A session standing below a root
+        # that has no handoff of its own is the one case where the folder the
+        # user opened matters more than anything on disk -- and where getting it
+        # wrong plants a .baton/ nobody wanted, which then makes that folder a
+        # root forever. Ask, once: afterwards the document exists and everything
+        # resolves on its own.
+        return None, "ask_where"
+    if not found.projects:
+        return Target(root), "root"   # the ordinary single-project case
+    # Not even when there is exactly one, and not even when the root has a
+    # handoff of its own. Being the only project on disk is not evidence that
+    # THIS handoff is that project's: a session at the root working on a folder
+    # that has no handoff yet would have its content written over the one
+    # project that does. The count does not change what is being decided, which
+    # is whose handoff gets replaced.
+    return None, "ambiguous"
+
+
 def _candidates_by_name(discovery: Discovery, key: str):
     """Existing directories under the root whose name matches `key`.
 

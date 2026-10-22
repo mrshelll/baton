@@ -478,6 +478,57 @@ class TestDoctor(Base):
         self.assertIn("limit", p.stdout.lower())
 
 
+class TestWritableTarget(Base):
+    """Where a handoff may be written without asking anybody.
+
+    One rule for the CLI and the unattended hooks: a hook cannot ask, so the
+    cases where the CLI would ask have to come back as "do not write".
+    """
+
+    def target(self, here=None):
+        found = projects.discover(self.project)
+        root_enabled = storage.Paths(self.project).document.is_file()
+        return projects.writable_target(self.project, found, here or self.project,
+                                        root_enabled)
+
+    def test_a_root_with_no_projects_is_the_root(self):
+        self.assertEqual(self.target(), (projects.Target(self.project), "root"))
+
+    def test_two_projects_and_none_active_is_ambiguous(self):
+        self.sub("proyectos/radar")
+        self.sub("proyectos/instrumentos")
+        self.assertEqual(self.target(), (None, "ambiguous"))
+
+    def test_a_root_with_its_own_handoff_and_one_project_is_ambiguous(self):
+        # The case that "active, else the root" gets wrong: the root's handoff
+        # being there says nothing about which project this session worked on.
+        self.handoff(self.project)
+        self.sub("proyectos/radar")
+        self.assertEqual(self.target(), (None, "ambiguous"))
+
+    def test_the_active_project_is_the_target(self):
+        self.sub("proyectos/radar")
+        self.sub("proyectos/instrumentos")
+        found = projects.discover(self.project)
+        radar = [p for p in found.projects if p.rel == "proyectos/radar"][0]
+        projects.set_active(self.project, radar, session="s")
+        self.assertEqual(self.target(), (projects.Target(self.project, radar), "active"))
+
+    def test_below_a_root_without_its_own_handoff_it_asks_where(self):
+        here = self.project / "carpeta nueva"
+        here.mkdir()
+        self.assertEqual(self.target(here), (None, "ask_where"))
+
+    def test_the_active_project_wins_over_asking_where(self):
+        self.sub("proyectos/radar")
+        found = projects.discover(self.project)
+        projects.set_active(self.project, found.projects[0], session="s")
+        here = self.project / "carpeta nueva"
+        here.mkdir()
+        self.assertEqual(self.target(here),
+                         (projects.Target(self.project, found.projects[0]), "active"))
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()
