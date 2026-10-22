@@ -8,7 +8,7 @@ from pathlib import Path
 from tests.helpers import REPO_ROOT, BaseCase
 
 sys.path.insert(0, str(REPO_ROOT))
-from lib import output, projects, storage  # noqa: E402
+from lib import document, output, projects, storage  # noqa: E402
 
 
 class Base(BaseCase):
@@ -270,9 +270,288 @@ class TestCompactionInstruction(unittest.TestCase):
         self.assertIn("nothing after </baton-handoff>", text)
 
 
+class TestPostCompactWritesTheBlock(Base):
+    """With a note from this session's PreCompact and a valid block at the end of
+    the summary, the PostCompact writes the handoff and arms nothing. Anything
+    else falls back to today's path and leaves the previous handoff untouched."""
+
+    PREVIOUS = "---\nbaton: 1\nmode: continue\n---\n## State\nthe previous one\n"
+
+    def setUp(self):
+        super().setUp()
+        self.paths = self.enable(self.PREVIOUS)
+        self.before = self.paths.document.read_bytes()
+
+    @staticmethod
+    def summary(body="## State\nStripe migrated in src/pay.py; refunds left.\n",
+                mode="memory", tail="\n"):
+        tag = output.COMPACTION_TAG
+        return ("<analysis>thinking</analysis>\n<summary>Stripe was migrated.</summary>\n"
+                f'<{tag} mode="{mode}">\n{body}</{tag}>{tail}')
+
+    def note(self, where=None, session="test-session"):
+        storage.note_compact_request(storage.Paths(where or self.project), session)
+
+    def post(self, summary=None, **extra):
+        return self.run_hook_text("post-compact", self.payload(
+            "PostCompact", trigger="auto",
+            compact_summary=self.summary() if summary is None else summary, **extra))
+
+    def config(self, data):
+        claude = self.project / ".claude"
+        claude.mkdir(exist_ok=True)
+        (claude / "baton.json").write_text(json.dumps(data), encoding="utf-8")
+
+    def last_result(self, where=None):
+        log = storage.Paths(where or self.project).log
+        lines = [l for l in log.read_text(encoding="utf-8").splitlines() if l.strip()]
+        return json.loads(lines[-1])["result"]
+
+    def request(self, where=None):
+        return json.loads(storage.Paths(where or self.project).compact_request
+                          .read_text(encoding="utf-8"))
+
+    def armed(self, where=None):
+        p = storage.Paths(where or self.project).pending
+        return p.exists() and bool(json.loads(p.read_text(encoding="utf-8")).get("armed"))
+
+    def summaries(self, where=None):
+        return list(storage.Paths(where or self.project).auto.glob("summary-*.md"))
+
+    def assert_fell_back(self, out):
+        self.assertEqual(out, "")
+        self.assertEqual(self.paths.document.read_bytes(), self.before)
+        self.assertTrue(self.armed(), "the fallback arms the flag as today")
+        self.assertEqual(len(self.summaries()), 1)
+
+    # -- written -------------------------------------------------------------
+    def test_a_valid_block_is_written_and_nothing_is_armed(self):
+        self.note()
+        rc, out, err = self.post()
+        self.assertEqual(rc, 0, err)
+        text = self.paths.document.read_text(encoding="utf-8")
+        self.assertIn("Stripe migrated in src/pay.py", text)
+        self.assertIn("mode: memory", text)
+        self.assertFalse(self.armed())
+        note = self.request()
+        self.assertIs(note["written"], True)
+        self.assertTrue(note["written_at"])
+        self.assertEqual(note["fingerprint"], document.fingerprint(text))
+        self.assertEqual(out.strip(), output.load_strings("en")["auto_handoff"]["ready"])
+        self.assertFalse(out.lstrip().startswith("{"), "PostCompact stdout is shown raw")
+        self.assertIn("handoff written from compaction", self.last_result())
+
+    def test_the_summary_is_saved_even_when_written(self):
+        self.note()
+        self.post()
+        self.assertEqual(len(self.summaries()), 1)
+
+    def test_the_previous_handoff_goes_to_the_history(self):
+        self.note()
+        self.post()
+        kept = list(self.paths.history.glob("HANDOFF-*-continue.md"))
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0].read_bytes(), self.before)
+
+    def test_a_continue_block_is_written_in_memory_mode(self):
+        # Ruling 5: the summarizer cannot see the latest messages.
+        self.note()
+        self.post(self.summary(mode="continue",
+                               body="## State\nhalf done\n## Next step\nedit src/a.py:3\n"))
+        text = self.paths.document.read_text(encoding="utf-8")
+        self.assertEqual(document.read_mode(text), "memory")
+        self.assertIn("edit src/a.py:3", text)
+        result = self.last_result()
+        self.assertIn("handoff written from compaction", result)
+        self.assertIn("continue", result)
+
+    def test_in_spanish_the_notice_is_spanish(self):
+        self.config({"language": "es"})
+        self.note()
+        _, out, _ = self.post(self.summary(body="## Estado\nStripe migrado.\n"))
+        self.assertEqual(out.strip(),
+                         "baton: traspaso listo. Escribe /clear para seguir en una sesión nueva.")
+
+    def test_the_active_project_gets_it_and_the_root_does_not(self):
+        radar = self.project / "proyectos" / "radar"
+        other = self.project / "proyectos" / "instrumentos"
+        for where in (radar, other):
+            where.mkdir(parents=True)
+            self.enable_at(where)
+        found = projects.discover(self.project)
+        active = next(p for p in found.projects if p.name.endswith("radar"))
+        projects.set_active(self.project, active, session="test-session")
+        radar_before = storage.Paths(radar).document.read_bytes()
+        self.note(radar)
+        rc, _, err = self.post()
+        self.assertEqual(rc, 0, err)
+        self.assertNotEqual(storage.Paths(radar).document.read_bytes(), radar_before)
+        self.assertEqual(self.paths.document.read_bytes(), self.before)
+        self.assertFalse(self.armed(radar))
+        self.assertIs(self.request(radar)["written"], True)
+
+    def enable_at(self, where):
+        p = storage.Paths(where)
+        p.document.parent.mkdir(parents=True, exist_ok=True)
+        p.document.write_text("---\nbaton: 1\nmode: memory\n---\n## State\nx\n", encoding="utf-8")
+
+    # -- the mod speaks instead ------------------------------------------------
+    def test_with_the_mod_it_writes_and_prints_nothing(self):
+        self.note()
+        rc, out, err = self.post(baton_mod=True)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out, "")
+        self.assertIn("Stripe migrated", self.paths.document.read_text(encoding="utf-8"))
+        self.assertFalse(self.armed())
+
+    def test_display_panel_prints_nothing_either(self):
+        self.config({"display": "panel"})
+        self.note()
+        _, out, _ = self.post()
+        self.assertEqual(out, "")
+        self.assertIn("Stripe migrated", self.paths.document.read_text(encoding="utf-8"))
+
+    # -- fallback --------------------------------------------------------------
+    def test_without_a_note_it_behaves_as_today(self):
+        rc, out, err = self.post()
+        self.assertEqual(rc, 0, err)
+        self.assert_fell_back(out)
+        self.assertEqual(self.last_result(), "summary saved, handoff pending")
+
+    def test_a_note_from_another_session_is_no_note(self):
+        self.note(session="another session")
+        _, out, _ = self.post()
+        self.assert_fell_back(out)
+        self.assertIs(self.request()["written"], False)
+
+    def test_an_empty_session_id_is_no_session(self):
+        self.note(session="")
+        _, out, _ = self.post(session_id="")
+        self.assert_fell_back(out)
+
+    def test_over_budget_falls_back(self):
+        self.note()
+        long = "".join(f"- line {i} of a summary nobody distilled\n" for i in range(200))
+        _, out, _ = self.post(self.summary(body=f"## State\n{long}"))
+        self.assert_fell_back(out)
+        self.assertIs(self.request()["written"], False)
+        self.assertIn("compaction block rejected: over_budget", self.last_result())
+
+    def test_an_invalid_block_falls_back(self):
+        self.note()
+        _, out, _ = self.post(self.summary(body="## Traps\nno state here\n"))
+        self.assert_fell_back(out)
+        self.assertIn("compaction block rejected: invalid", self.last_result())
+
+    def test_a_summary_without_a_block_falls_back(self):
+        self.note()
+        _, out, _ = self.post("Summary: Stripe was migrated.")
+        self.assert_fell_back(out)
+        self.assertIn("compaction block not found", self.last_result())
+
+    def test_a_cut_off_block_falls_back(self):
+        self.note()
+        _, out, _ = self.post(self.summary(tail="\nand then the summarizer kept talking"))
+        self.assert_fell_back(out)
+        self.assertIn("compaction block not found", self.last_result())
+
+    def test_a_draft_in_progress_is_not_overwritten(self):
+        # Ruling 10: a model may be in the middle of /baton.
+        self.note()
+        self.paths.ensure_local()
+        self.paths.draft.write_text("## State\nmine, half written\n", encoding="utf-8")
+        _, out, _ = self.post()
+        self.assert_fell_back(out)
+        self.assertEqual(self.paths.draft.read_text(encoding="utf-8"),
+                         "## State\nmine, half written\n")
+        self.assertIn("compaction block not written: draft in progress", self.last_result())
+
+    def test_a_busy_handoff_falls_back_without_retrying(self):
+        self.note()
+        self.paths.ensure_local()
+        self.paths.lock.write_text("99999", encoding="utf-8")   # fresh: another writer
+        _, out, _ = self.post()
+        self.assert_fell_back(out)
+        self.assertIn("compaction block rejected: busy", self.last_result())
+
+    def test_an_unexpected_failure_still_arms_the_flag(self):
+        # Failing half-way must not leave a compaction with neither a handoff
+        # nor a request for one.
+        import importlib.util
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location(
+            "baton_hook_build_fails", REPO_ROOT / "hooks" / "baton_hook.py")
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+
+        def boom(*_):
+            raise RuntimeError("git on fire")
+
+        self.note()
+        stdin = io.StringIO(json.dumps(self.payload(
+            "PostCompact", trigger="auto", compact_summary=self.summary())))
+        captured = io.StringIO()
+        with mock.patch.object(hook.handoff, "build", boom), \
+                mock.patch.object(sys, "argv", ["baton_hook.py", "post-compact"]), \
+                mock.patch.object(sys, "stdin", stdin), redirect_stdout(captured):
+            self.assertEqual(hook.main(), 0)
+        self.assert_fell_back(captured.getvalue())
+        self.assertIn("compaction block failed: RuntimeError: git on fire", self.last_result())
+
+    def test_running_twice_ends_in_the_same_state(self):
+        self.note()
+        self.post()
+        first = document.extract_body(self.paths.document.read_text(encoding="utf-8"))
+        rc, _, err = self.post()
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(document.extract_body(self.paths.document.read_text(encoding="utf-8")),
+                         first)
+        self.assertFalse(self.armed())
+
+
+class TestModActive(unittest.TestCase):
+    def mod_active(self, entry, display="receipt"):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "baton_hook_mod_active", REPO_ROOT / "hooks" / "baton_hook.py")
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        return hook._mod_active(entry, {"display": display})
+
+    def test_the_payload_signal_or_the_panel_display(self):
+        self.assertTrue(self.mod_active({"baton_mod": True}))
+        self.assertTrue(self.mod_active({}, display="panel"))
+        self.assertFalse(self.mod_active({}))
+        for fake in ("true", 1, "yes", None):
+            with self.subTest(fake=fake):
+                self.assertFalse(self.mod_active({"baton_mod": fake}))
+
+
 class TestCompactRequest(BaseCase):
     def paths(self):
         return storage.Paths(self.project)
+
+    def test_mark_written_records_the_fingerprint(self):
+        storage.note_compact_request(self.paths(), "s1")
+        storage.mark_compact_written(self.paths(), "s1", "abc123")
+        note = storage.read_compact_request(self.paths(), "s1")
+        self.assertIs(note["written"], True)
+        self.assertEqual(note["fingerprint"], "abc123")
+        self.assertTrue(note["written_at"])
+
+    def test_mark_written_leaves_another_sessions_note_alone(self):
+        # Another session's PreCompact may have replaced the note meanwhile.
+        storage.note_compact_request(self.paths(), "s2")
+        storage.mark_compact_written(self.paths(), "s1", "abc123")
+        note = storage.read_compact_request(self.paths(), "s2")
+        self.assertIs(note["written"], False)
+        self.assertNotIn("fingerprint", note)
+
+    def test_mark_written_without_a_note_writes_nothing(self):
+        storage.mark_compact_written(self.paths(), "s1", "abc123")
+        self.assertFalse(self.paths().compact_request.exists())
 
     def test_read_returns_the_note_of_this_session(self):
         storage.note_compact_request(self.paths(), "s1")

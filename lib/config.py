@@ -30,6 +30,10 @@ DEFAULTS = {
     "discovery": {"depth": projects.DEFAULT_DEPTH, "max_dirs": projects.DEFAULT_MAX_DIRS},
     # The one-line receipt proving the hook fired.
     "receipt": True,
+    # Who tells the person what baton did: the hooks' own lines ("receipt"), or
+    # baton's mod, through its strip and panel ("panel"). The mod also announces
+    # itself in the hook payload, and that signal wins when present.
+    "display": "receipt",
     # Content lines the receipt may spend showing what the session left behind.
     # The harness reprints every line with its own prefix, so this is a noise
     # budget: 0 goes back to the single line that only proves the hook fired.
@@ -53,6 +57,9 @@ DEFAULTS = {
         "min_tokens": 40_000,
     },
 }
+
+#: Valid values of `display`.
+DISPLAYS = ("panel", "receipt")
 
 #: Past this, drafting the handoff can itself trigger the compaction it exists
 #: to get ahead of.
@@ -230,6 +237,12 @@ def _merge(base: dict, over: dict, path: Path, warnings: list) -> dict:
             else:
                 warnings.append(f"{path.name}: 'history_max' must be an integer >= 0; "
                                 f"using {DEFAULTS['history_max']}")
+        elif key == "display":
+            if isinstance(value, str) and value in DISPLAYS:
+                out["display"] = value
+            else:
+                warnings.append(f"{path.name}: 'display' must be one of "
+                                f"{', '.join(DISPLAYS)}; using {DEFAULTS['display']}")
         elif key == "language":
             if isinstance(value, str) and value in output.available_languages():
                 out["language"] = value

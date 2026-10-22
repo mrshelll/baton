@@ -429,6 +429,19 @@ def note_compact_request(paths: Paths, session_id: str) -> None:
                {"session": session_id, "requested_at": now_utc(), "written": False})
 
 
+def mark_compact_written(paths: Paths, session_id: str, fingerprint: str) -> None:
+    """Record on this session's note that the block came out and was written.
+
+    Only on a note that is this session's: another session's PreCompact may have
+    replaced it in the meantime, and marking that one would tell its SessionStart
+    a handoff exists that nobody wrote for it."""
+    data = read_json(paths.compact_request)
+    if not session_id or data.get("session") != session_id:
+        return
+    data.update({"written": True, "written_at": now_utc(), "fingerprint": fingerprint})
+    write_json(paths.compact_request, data)
+
+
 def read_compact_request(paths: Paths, session_id: str, max_age_hours: int = 12):
     """The note, only when it belongs to `session_id` and is recent; else None.
 

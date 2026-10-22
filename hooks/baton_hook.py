@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import config, document, gitinfo, output, projects, storage, window  # noqa: E402
+from lib import config, document, gitinfo, handoff, output, projects, storage, window  # noqa: E402,E501
 
 
 def _read_input() -> dict:
@@ -41,7 +41,8 @@ def _read_input() -> dict:
 
 
 def _write_text(text: str) -> None:
-    """Write plain text as is. `pre-compact` only: its stdout is not JSON."""
+    """Write plain text as is: `pre-compact` and `post-compact`, whose stdout is
+    never read as JSON."""
     if not text:
         return
     try:
@@ -171,31 +172,98 @@ def _pre_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[s
     return text, f"handoff block requested{label}"
 
 
-def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, str]:
-    """Save the compaction summary and arm the flag. Nothing else.
+def _mod_active(entry: dict, cfg) -> bool:
+    """True when baton's mod tells the person what happened, not the hooks.
 
-    Nothing can be drafted here: a compaction has no model turn, and the binary
-    itself says so when it rejects `prompt`-type hooks -- "no conversation
-    context is available". What it does have is `compact_summary`, the summary
-    the harness just produced. It is kept as INPUT so the next Stop can ask for
-    a properly written handoff.
+    The mod marks every classic hook payload with `baton_mod: true`; `display:
+    "panel"` says the same from the config. Strictly `True`: a near-miss is not
+    the mod, and the hooks' own line is the safe default."""
+    return entry.get("baton_mod") is True or cfg.get("display") == "panel"
 
-    And it does not touch the handoff. Ever: a summary nobody wrote must not
-    overwrite one written with judgement.
+
+def _write_compaction_block(entry: dict, target, why: str, cfg) -> tuple[bool, str]:
+    """Write the handoff the summarizer appended, if this session asked for it.
+
+    Returns `(written, what_happened)`, the second empty when there was nothing
+    to try: no destination or no request from this session's PreCompact. Then
+    the compaction is today's, and so is its log line.
+
+    Always in `memory` mode, whatever the block says: the summarizer cannot see
+    the latest messages, so what it calls the next step may already be done.
+    Every refusal leaves the previous handoff exactly as it was.
+    """
+    if target is None:
+        return False, ""
+    session = entry.get("session_id") or ""
+    wpaths = storage.Paths(target.path, document_rel=cfg["document"])
+    if storage.read_compact_request(wpaths, session) is None:
+        return False, ""
+    block = document.extract_compaction_block(entry.get("compact_summary") or "")
+    if block is None:
+        return False, "compaction block not found"
+    if wpaths.draft.exists():
+        # A model may be in the middle of /baton: its draft is newer judgement
+        # than a summary, and writing would also delete it.
+        return False, "compaction block not written: draft in progress"
+    asked, body = block
+    strings = output.load_strings(cfg["language"])
+    built = handoff.build(body, document.SAFE_MODE, target.path, cfg, strings)
+    result = handoff.write_if_fits(wpaths, built, cfg)
+    if result != "written":
+        return False, f"compaction block rejected: {result}"
+    storage.mark_compact_written(
+        wpaths, session, document.fingerprint(built.final, strings["context_section"]))
+    forced = f", the block asked for {asked}" if asked != document.SAFE_MODE else ""
+    label = f" for {target.label}" if why == "active" else ""
+    return True, f"handoff written from compaction{label} in memory mode{forced}"
+
+
+def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found):
+    """Save the summary; write the handoff block it carries, or arm the flag.
+
+    A compaction has no model turn of its own -- the binary says so when it
+    rejects `prompt`-type hooks: "no conversation context is available". What it
+    does have is `compact_summary`. When this session's PreCompact asked the
+    summarizer for a handoff block, the block is written through the same path
+    as `baton.py write`, to the same destination the PreCompact used, and
+    nothing is armed. Anything else -- no request, no block, a block the writer
+    refuses -- arms the flag as before, so the next Stop asks for a handoff
+    written with judgement. The summary is kept either way.
+
+    Its stdout is shown to the person raw, never parsed as JSON: the notice goes
+    out as plain text, and not at all when the mod gives it instead.
     """
     target, _ = _hook_target(root, paths, cfg, found)
     if target is None:
         return {}, "silent: no target for the summary"
+    session = entry.get("session_id") or ""
     storage.save_summary(target, entry.get("compact_summary") or "",
                          trigger=entry.get("trigger") or "auto")
-    storage.arm_pending(target, entry.get("session_id") or "")
+
+    here = entry.get("cwd") or os.getcwd()
+    destination, why = projects.writable_target(root, found, here,
+                                                root_enabled=paths.document.is_file())
+    try:
+        written, what = _write_compaction_block(entry, destination, why, cfg)
+    except Exception as exc:  # noqa: BLE001 - the fallback below must still run
+        # Nothing after the write itself can raise, so a failure here means the
+        # handoff was not replaced, and the flag is what keeps it from being lost.
+        written, what = False, f"compaction block failed: {type(exc).__name__}: {exc}"
+    if not written:
+        storage.arm_pending(target, session)
 
     # A compaction moves the baseline -- 90% becomes 20% -- so the thresholds
     # already met describe an occupation that no longer exists.
-    state = storage.read_window(paths, entry.get("session_id") or "")
+    state = storage.read_window(paths, session)
     if state["fired"] or state["warned"]:
         storage.save_window(paths, dict(state, fired=[], warned=False))
-    return {}, "summary saved, handoff pending"
+
+    if written:
+        if _mod_active(entry, cfg):
+            return "", f"summary saved, {what}"
+        ready = output.load_strings(cfg["language"])["auto_handoff"]["ready"]
+        return ready + "\n", f"summary saved, {what}"
+    return "", "summary saved, handoff pending" + (f"; {what}" if what else "")
 
 
 def _k(tokens: int) -> str:
@@ -410,7 +478,9 @@ def main() -> int:
             return 0
 
         payload, result = handler(entry, paths, cfg, root, found)
-        if event in PLAIN_TEXT_EVENTS:
+        # `post-compact` answers in plain text too, but only on success: Claude
+        # Code shows its stdout raw. Its errors keep today's message.
+        if event in PLAIN_TEXT_EVENTS or isinstance(payload, str):
             _write_text(payload)
         else:
             _emit(payload)

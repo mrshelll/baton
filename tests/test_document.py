@@ -133,5 +133,65 @@ class TestSpanishStrings(unittest.TestCase):
         self.assertEqual(document.read_mode(text), "memory")
 
 
+class TestExtractCompactionBlock(unittest.TestCase):
+    """The block the summarizer appends after its summary, and nothing else."""
+
+    SUMMARY = "<analysis>thinking</analysis>\n<summary>Stripe was migrated.</summary>\n"
+
+    def block(self, body="## State\nStripe migrated; refunds left.\n", mode="memory"):
+        return f'<{output.COMPACTION_TAG} mode="{mode}">\n{body}</{output.COMPACTION_TAG}>'
+
+    def extract(self, text):
+        return document.extract_compaction_block(text)
+
+    def test_a_block_at_the_end(self):
+        self.assertEqual(self.extract(self.SUMMARY + self.block() + "\n\n"),
+                         ("memory", "## State\nStripe migrated; refunds left."))
+
+    def test_the_mode_of_the_attribute_comes_back(self):
+        found = self.extract(self.SUMMARY + self.block(mode="continue"))
+        self.assertEqual(found[0], "continue")
+
+    def test_two_blocks_give_the_last(self):
+        # The first one quoted mid-summary -- the instruction itself, say.
+        quoted = self.block(body="## State\n...\n")
+        text = (self.SUMMARY + f"The user was told:\n{quoted}\nand carried on.\n"
+                + self.block(body="## State\nthe real one\n"))
+        self.assertEqual(self.extract(text), ("memory", "## State\nthe real one"))
+
+    def test_an_unclosed_block_is_none(self):
+        text = self.SUMMARY + f'<{output.COMPACTION_TAG} mode="memory">\n## State\ncut off'
+        self.assertIsNone(self.extract(text))
+
+    def test_text_after_the_close_is_none(self):
+        self.assertIsNone(self.extract(self.SUMMARY + self.block() + "\nOne more thing."))
+
+    def test_an_unknown_mode_is_none(self):
+        for mode in ("otro", "Memory", ""):
+            with self.subTest(mode=mode):
+                self.assertIsNone(self.extract(self.SUMMARY + self.block(mode=mode)))
+
+    def test_a_block_without_a_mode_is_none(self):
+        text = (self.SUMMARY + f"<{output.COMPACTION_TAG}>\n## State\nx\n"
+                f"</{output.COMPACTION_TAG}>")
+        self.assertIsNone(self.extract(text))
+
+    def test_a_stray_close_inside_the_last_block_is_none(self):
+        # The last opening tag, then a close, then loose text, then another
+        # close: what sits between them is not one block.
+        text = self.SUMMARY + self.block().replace(
+            "refunds left.\n", f"refunds left.\n</{output.COMPACTION_TAG}>\nloose\n")
+        self.assertIsNone(self.extract(text))
+
+    def test_crlf_and_trailing_blank_lines_are_tolerated(self):
+        text = (self.SUMMARY + self.block() + "\r\n  \r\n").replace("\n", "\r\n")
+        self.assertEqual(self.extract(text)[0], "memory")
+
+    def test_garbage_is_none(self):
+        for garbage in (None, "", "   ", 42, f"</{output.COMPACTION_TAG}>"):
+            with self.subTest(garbage=garbage):
+                self.assertIsNone(self.extract(garbage))
+
+
 if __name__ == "__main__":
     unittest.main()

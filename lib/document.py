@@ -218,6 +218,45 @@ def read_sections(text, context_section: str = "Context") -> dict:
     return sections
 
 
+#: The marks around the handoff the compaction summarizer appends. Defined here,
+#: the module everything else imports, so `output` can name it in the
+#: instruction without this module importing `output` back.
+COMPACTION_TAG = "baton-handoff"
+
+_RE_OPEN = re.compile(rf"<{COMPACTION_TAG}(\s[^>]*)?>")
+_RE_MODE_ATTR = re.compile(r"""\bmode[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)')""")
+
+
+def extract_compaction_block(summary) -> tuple[str, str] | None:
+    """`(mode, body)` of the LAST handoff block in a compaction summary, or None.
+
+    Only when its close is the last non-blank thing in the summary: text after
+    it means the summarizer kept going, and nothing guarantees the block is
+    whole. Earlier blocks are quotes -- the instruction itself, say -- never the
+    handoff. The mode is the attribute's, as strict as `read_mode`; whoever
+    writes the block decides what to do with it.
+    """
+    if not isinstance(summary, str):
+        return None
+    close = f"</{COMPACTION_TAG}>"
+    text = summary.rstrip()
+    if not text.endswith(close):
+        return None
+    head = text[:-len(close)]
+    opens = list(_RE_OPEN.finditer(head))
+    if not opens:
+        return None
+    last = opens[-1]
+    body = head[last.end():]
+    if close in body:
+        return None
+    attr = _RE_MODE_ATTR.search(last.group(1) or "")
+    mode = next((g for g in attr.groups() if g is not None), None) if attr else None
+    if mode not in MODES:
+        return None
+    return mode, body.strip()
+
+
 def fingerprint(text, context_section: str = "Context") -> str:
     """A handoff's identity: its body alone.
 

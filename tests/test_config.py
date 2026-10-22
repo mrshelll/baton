@@ -91,6 +91,21 @@ class TestLoad(BaseCase):
         self.write("project", {"language": "es"})
         self.assertEqual(self.load()["language"], "es")
 
+    def test_display_defaults_to_the_receipt(self):
+        self.assertEqual(self.load()["display"], "receipt")
+
+    def test_display_panel_is_honoured(self):
+        self.write("project", {"display": "panel"})
+        self.assertEqual(self.load()["display"], "panel")
+
+    def test_an_unknown_display_warns_and_keeps_the_receipt(self):
+        for bad in ("Panel", "franja", True, 1, None):
+            with self.subTest(bad=bad):
+                self.write("project", {"display": bad})
+                c = self.load()
+                self.assertEqual(c["display"], "receipt")
+                self.assertTrue(any("'display'" in w for w in c.warnings), c.warnings)
+
     def test_unknown_language_falls_back_and_lists_what_exists(self):
         self.write("project", {"language": "klingon"})
         c = self.load()

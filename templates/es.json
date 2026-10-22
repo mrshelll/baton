@@ -117,6 +117,7 @@
     "write": "Escribe el traspaso ahora siguiendo el skill `baton`: pide el contexto con `baton.py context`, redacta SOLO el cuerpo en el fichero de borrador y escríbelo con `baton.py write --mode <memory|continue>`. Después dile al usuario en una línea que el traspaso está escrito y que es buen momento para seguir en una sesión nueva.",
     "watch": "baton: esta sesión ha consumido cerca del {percent}% de su ventana de contexto. No empieces una tarea nueva a partir de aquí: termina la que está en curso. baton ofrecerá pronto escribir el traspaso para seguir en una sesión nueva.",
     "notice_ask": "baton: contexto al {percent}% -- Claude te preguntará si escribe el traspaso.",
-    "notice_write": "baton: contexto al {percent}% -- Claude está escribiendo el traspaso."
+    "notice_write": "baton: contexto al {percent}% -- Claude está escribiendo el traspaso.",
+    "ready": "baton: traspaso listo. Escribe /clear para seguir en una sesión nueva."
   }
 }

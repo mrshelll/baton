@@ -408,8 +408,9 @@ def wrap(body, mode, written, source, freshness_notice="", repeat=None,
     return "\n".join(parts)
 
 
-#: The block the compaction summarizer is asked to append; PostCompact reads it.
-COMPACTION_TAG = "baton-handoff"
+#: The block the compaction summarizer is asked to append; PostCompact reads it
+#: with `document.extract_compaction_block`, which owns the constant.
+COMPACTION_TAG = document.COMPACTION_TAG
 
 #: The instruction names the language in words: the summarizer reads English.
 _LANGUAGE_NAMES = {"en": "English", "es": "Spanish"}
