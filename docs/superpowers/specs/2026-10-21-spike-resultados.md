@@ -264,6 +264,9 @@ El resumidor leyó de caché 97k de los 114k: la caché estaba caliente.
        (`compact_boundary.compactMetadata.preservedMessages`) y la añada al traspaso;
      - (b) forzar `memory` en los traspasos que salen del resumen;
      - (c) avisar en la instrucción y aceptar el riesgo.
+   - **Resuelto por el Ruling 5: opción (b).** Los traspasos que salen de una compactación se
+     escriben siempre en modo `memory`, diga lo que diga el bloque, y la instrucción del `PreCompact`
+     avisa al resumidor de que los mensajes más recientes quedan fuera de su vista.
 2. **La salida de `PreCompact` y `PostCompact` se muestra en crudo** (ver S6). La Tarea 5 no debe
    emitir `systemMessage` en `PostCompact`, y la instrucción de la Tarea 4 debe ser breve.
 3. **`precomputed` y `miss_hook` no se ven desde fuera** (ver S7). Una «compactación en reposo real»

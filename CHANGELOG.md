@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.6.0 — 2026-10-22
+
+Claude Code now compacts a session that sits idle: close to an hour without
+moving and past 200,000 tokens, it compacts just before the prompt cache expires,
+so coming back does not re-read the whole conversation uncached. It saves tokens
+and is worth keeping on. But with a 1M window it lands at 20–30% of the context,
+long before baton's 65% threshold, so the handoff written with the conversation in
+view was never asked for. On one real project the context never passed 48%, and
+every handoff came out of a compaction summary, asked for after coming back. This
+release writes the handoff at the moment of compacting, whatever started it, and
+gives baton a band and a panel so it can be used with clicks.
+
+### Added
+- **The handoff is written right before any compaction** — idle, window full or
+  `/compact`. A `PreCompact` hook asks the summarizer to append the handoff after
+  its summary, between `<baton-handoff>` marks, with the sections, budget and
+  mode rule of the `baton` skill; `PostCompact` writes that block through the same
+  path as `/baton`, so the budget and the history apply. No extra model call: it
+  comes out of the same request as the summary, with the cache warm. When it is
+  written you see `baton: handoff ready. Type /clear to continue in a fresh
+  session.`, and the `/clear` stays yours. It only happens where `/baton` would
+  write without asking; anywhere else, or when the block does not come out, the
+  compaction goes the old way: the summary is kept and the next turn asks for the
+  handoff.
+- **The band**: one line always visible above the prompt, from a mod that ships
+  inside the plugin. It says how the handoff stands — saved, ready after a
+  compaction, open blockers, context past a threshold, none yet — and carries the
+  action for the moment: `[ New session ]` runs `/clear`, `[ Write handoff ]` runs
+  `/baton:baton`. No button has a key, so a digit typed into an empty prompt never
+  presses one.
+- **The panel**: what the receipt showed, whole. Blockers first, then the next
+  step and the state; decisions and traps folded; when and how the handoff was
+  written, its size and the current context. Other projects under the same root
+  open in it, read-only, with a way back. It opens on its own at startup and
+  after `/clear` when the handoff has blockers, beside the conversation from 144
+  columns; narrower, it waits for a click.
+- **`display`** (`receipt` by default, or `panel`): who tells you what baton did.
+  The mod marks the hooks' input itself when the session has a terminal, and that
+  mark wins; `panel` covers the case where it does not arrive. Without the mod it
+  costs you the receipt and the threshold ask.
+- `baton.py panel --json`: everything the mod draws, from the same Python that
+  reads the handoff for the hooks, so there is one parser, not two.
+
+### Changed
+- **A handoff written at compaction is always `memory`**, whatever the block asks
+  for. Claude Code keeps the last answer verbatim and summarises what came before
+  it, so the summarizer never sees how the turn ended. In testing, a block chose
+  `continue` with a step that was already done; a new session would have repeated
+  it. `memory` only waits for you.
+- **After a compaction that wrote the handoff, nothing interrupts.** The next turn
+  no longer asks for a handoff — it is written — and the compacted session no
+  longer gets the old handoff injected on top of the summary carrying the new one.
+- **With the mod in the terminal, the hooks step back**: no receipt at session
+  start, no line after a compaction, and a threshold no longer interrupts the
+  turn — the band shows it. The 60% warning to the model stays, and so does the
+  ask after a compaction whose block did not come out. Without the mod, or on the
+  desktop app, VS Code or mobile, everything works as in 0.5.1; the handoff at
+  compaction works there too, because it uses plain hooks.
+- **The README no longer says `PreCompact` is useless here.** A compaction has no
+  model turn, but whatever `PreCompact` prints reaches the summarizer, which is a
+  model with the conversation in front of it. That is the lever this release
+  uses.
+- **Next to `agents-panel`**: the line above the prompt is shared, and earlier
+  versions of `agents-panel` gave it up whole when something was drawn under
+  them, so depending on load order their box disappeared. `agents-panel` 0.3.0
+  stacks with baton's line — its box above, baton below — and a `clear-questions`
+  card still comes first.
+
+### Fixed
+- **An unexpected error after compacting showed up as raw JSON.** Claude Code
+  prints `PostCompact` output as it is, never reading it as JSON, so baton's
+  error message appeared on screen as `{"systemMessage": "baton: could not
+  complete 'post-compact' …"}`. It is now one line of text in the configured
+  language — English if even the language cannot be read — and the details stay
+  in the log. The hook still exits 0, and the other events keep their message.
+
 ## 0.5.1 — 2026-09-25
 
 ### Fixed

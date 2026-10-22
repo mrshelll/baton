@@ -107,9 +107,10 @@ continuar trabajo.
 
 ## El ciclo automático
 
-Mientras trabajas no estás pensando en traspasar. baton sí, en dos momentos, los
-dos al terminar un turno, cuando no hay nada en marcha: cuando la ventana de
-contexto empieza a llenarse, y justo después de que el harness compacte.
+Mientras trabajas no estás pensando en traspasar. baton sí, en tres momentos:
+cuando la ventana de contexto empieza a llenarse, al terminar un turno sin nada
+en marcha; justo antes de que el harness compacte, a través del modelo
+que escribe el resumen; y justo después, si eso no dio un traspaso.
 
 ### Antes de que el harness compacte: la ventana de contexto
 
@@ -166,10 +167,89 @@ sobre la tabla.
 de tokens. Al 65 % no es nada; en el mismo borde podría disparar la compactación
 que existe para adelantar.
 
-### Después de que el harness compacte
+### Cuando el harness compacta
 
-Si el disparo por ventana estaba apagado, lo rechazaste o un turno muy largo lo
-adelantó, la compactación llega igual. baton también la atrapa:
+Claude Code compacta de tres formas: cuando la ventana se llena, cuando escribes
+`/compact`, y cuando la sesión se queda quieta. La **compactación en reposo** salta
+cuando la sesión lleva cerca de una hora sin moverse y la conversación pasa de
+200.000 tokens: compacta justo antes de que caduque la caché de prompts, para que
+al volver no se relea toda la conversación sin caché. Existe para ahorrar tokens,
+y vale la pena tenerla encendida.
+
+También cambia lo que baton tiene que atrapar. Con una ventana de 1M, la
+compactación en reposo llega al 20–30 % del contexto, mucho antes del umbral del
+65 %, así que la pregunta del umbral nunca llega. En un proyecto real el contexto
+nunca pasó del 48 %, y todos los traspasos salieron de un resumen de compactación,
+pedidos al volver. Un hook ni siquiera distingue la compactación en reposo de la
+de la ventana: las dos llegan como `auto`.
+
+Así que baton escribe el traspaso justo antes de cualquier compactación, la
+dispare lo que la dispare:
+
+```mermaid
+sequenceDiagram
+    participant U as Tú
+    participant CC as Claude Code
+    participant S as Resumidor
+    participant B as baton
+    participant D as .baton/HANDOFF.md
+
+    Note over U,CC: en reposo, ventana llena o /compact
+    CC->>B: PreCompact
+    B-->>CC: "tras el resumen, añade el traspaso"
+    CC->>S: la conversación más esa instrucción
+    S-->>CC: resumen y bloque de traspaso
+    CC->>B: PostCompact (trae compact_summary)
+    B->>D: bloque validado y escrito, modo memory
+    B-->>U: traspaso listo, escribe /clear
+    U->>CC: /clear
+    CC->>B: SessionStart
+    B-->>CC: el traspaso recién escrito
+```
+
+**`PreCompact` sí sirve para esto, a través del resumidor.** Versiones anteriores
+de este README decían que no: en la compactación no hay turno de modelo, y el
+binario rechaza los hooks que requieren conversación —*"no conversation context
+is available"*—. Eso sigue siendo cierto, pero lo que imprime un hook `PreCompact`
+se añade a las instrucciones del resumidor, y el resumidor es un modelo con la
+conversación delante. baton le pide que añada el traspaso tras el resumen, entre
+marcas `<baton-handoff>`, con las secciones, el presupuesto y la regla de modo de
+la skill `baton`. `PostCompact` toma ese bloque y lo escribe por el mismo camino
+que `/baton` —mismo presupuesto, mismo historial—, así que no entra nada que un
+`/baton` habría rechazado.
+
+No hay llamada aparte: el traspaso sale en la misma petición que el resumen, con
+la caché caliente, y solo se suman sus tokens de salida. Desaparece el turno que
+baton forzaba tras compactar para redactar desde el resumen.
+
+**Siempre en modo `memory`, pida lo que pida el bloque.** Claude Code conserva
+tal cual los últimos mensajes y resume solo lo anterior —en la práctica, la
+última respuesta del modelo, que suele ser la conclusión del turno—. El resumidor
+nunca la ve, así que el paso que da por siguiente puede estar ya hecho. En las
+pruebas pasó justo eso: un bloque eligió `continue` con un paso ya terminado. Una
+sesión nueva lo habría repetido. `memory` solo te espera.
+
+**Qué ves.** En `/compact`, Claude Code muestra la instrucción que baton le pasó
+al resumidor —no pasa de 12 líneas— y la deja en el contexto compactado. Cuando
+el traspaso queda escrito:
+
+```
+baton: traspaso listo. Escribe /clear para seguir en una sesión nueva.
+```
+
+Claude Code la imprime tras su propio prefijo `PostCompact [...] completed
+successfully:`. El `/clear` siempre lo decides tú. Si en vez de eso sigues en la
+sesión compactada, baton calla: el traspaso ya está guardado. Y esa sesión no
+recibe el traspaso viejo encima del resumen que trae el nuevo.
+
+**Solo donde `/baton` escribiría sin preguntar**: el proyecto activo de la
+sesión, o la raíz de un repo normal. En una raíz con varios proyectos y ninguno
+cargado, baton no imprime nada y la compactación sigue el camino de abajo.
+
+**Si el bloque no sale, baton pregunta justo después.** El resumidor no lo
+escribió, salió cortado, no cupo en el presupuesto, había un `/baton` a medio
+redactar, o no había un destino claro: baton guarda el resumen, arma una bandera
+y pide el traspaso al terminar el turno siguiente.
 
 ```mermaid
 sequenceDiagram
@@ -195,10 +275,6 @@ sequenceDiagram
 
 **Por qué pedirlo justo después.** El contexto acaba de vaciarse y el resumen está
 fresco: es el momento más barato de la sesión para redactar.
-
-`PreCompact` no sirve para esto: en la compactación no hay turno de modelo. El
-propio binario lo dice al rechazar los hooks que requieren conversación —
-*"no conversation context is available"*.
 
 **Como mucho una interrupción por umbral y por compactación**, con anti-bucle
 nativo (`stop_hook_active`) y un cooldown de 30 minutos que comparten las dos
@@ -278,6 +354,95 @@ contra él se sale de la sangría en la que el harness la imprime — y entonces
 terminal parte el resto contra la columna cero, debajo de nada, deshaciendo la
 estructura.
 
+Con el mod de baton en la terminal, el recibo pasa al panel, a continuación.
+
+## La franja y el panel
+
+baton trae además un mod para la terminal de Claude Code, para usarlo con clics en
+vez de comandos: una línea siempre visible sobre el prompt —la franja— y un panel
+con el traspaso completo.
+
+| Cuándo | La franja dice | Botón |
+|---|---|---|
+| Normal | `baton · traspaso hace 2 h · memoria` | |
+| Tras escribirlo una compactación | `baton · ✓ traspaso listo · recién` | `[ Sesión nueva ]` |
+| Se cruzó un umbral | `baton · ⚠ contexto al 65 %` | `[ Escribir traspaso ]` |
+| El traspaso tiene bloqueos | `baton · ⚠ 2 pendientes · hace 3 h` | |
+| Aún no hay traspaso | `baton · sin traspaso en este proyecto` | `[ Escribir traspaso ]` |
+| No se puede leer el traspaso | `baton · ⚠ no se pudo leer el traspaso` | |
+
+Un clic en la línea abre el panel; `clic → panel` va a la derecha cuando cabe.
+`[ Sesión nueva ]` ejecuta `/clear` por ti, como si lo hubieras escrito.
+`[ Escribir traspaso ]` ejecuta `/baton:baton`. Ningún botón tiene tecla: un
+dígito escrito en el prompt vacío nunca pulsa nada.
+
+**El panel** es lo que muestra el recibo, completo:
+
+```
+baton · mi-proyecto                                        ✓ Traspaso listo
+memoria · escrito recién, al compactar · 42 líneas · contexto 8 %
+[ Sesión nueva ]   Escribir traspaso
+
+⚠ Bloqueos (2)
+  1. …
+  2. …
+Siguiente paso
+  …
+Estado
+  …
+▸ Decisiones y su porqué (5)   ▸ Trampas (4)
+
+Otros proyectos
+  radar · memoria · hace 2 d
+```
+
+- **La cabecera** dice dónde y cómo está: el estado en una palabra con su icono,
+  el modo, cuándo y cómo se escribió, su tamaño y cuánto contexto lleva ahora la
+  sesión. Un traspaso más viejo que el código trae el aviso de frescura.
+- **Una acción principal**, la del momento: `Sesión nueva` tras una compactación,
+  `Escribir traspaso` en los demás casos.
+- **Primero los bloqueos**, luego el siguiente paso, luego el estado. Decisiones y
+  trampas van plegadas bajo su nombre; una sección larga muestra seis puntos y
+  `ver más`.
+- **Los otros proyectos** de la misma raíz se abren en el mismo panel, como
+  `baton › radar` con un botón `Volver`. Esa vista solo lee: `/baton` escribe el
+  proyecto de la sesión, nunca el que está en pantalla.
+
+**Se abre solo** al arrancar y tras `/clear` cuando el traspaso tiene bloqueos,
+al lado de la conversación si la terminal tiene al menos 144 columnas. Si es más
+estrecha, espera a tu clic: es la regla de Claude Code para un panel que nadie
+pidió.
+
+**Con el mod, los hooks se apartan.** No hay recibo al arrancar ni línea tras
+compactar —lo dice la franja—, y cruzar un umbral ya no interrumpe el turno: la
+franja muestra `⚠ contexto al 65 %` con `[ Escribir traspaso ]`. El aviso del
+60 % al modelo sigue, y también la pregunta tras una compactación cuyo bloque no
+salió: esa no es un umbral.
+
+**`/baton:baton` se queda.** Todo lo que hacen los botones lo hace el comando;
+los botones lo escriben por ti.
+
+**Solo en la terminal.** El mod dibuja solo en la terminal. Sin él —un Claude
+Code sin mods, o la app de escritorio, VS Code o el móvil— todo funciona como
+antes: el recibo, el `Stop` que pregunta en un umbral y el comando. Escribir el
+traspaso al compactar usa hooks normales, así que funciona en todas las
+superficies.
+
+Los hooks saben que el mod está porque marca su entrada cuando la sesión tiene
+terminal. Si la marca no llega, se comportan como si no hubiera mod: mejor un
+recibo de más que ninguno. `"display": "panel"` en la config les dice lo mismo
+desde tu lado; úsalo solo con el mod, porque sin él pierdes el recibo y la
+pregunta del umbral.
+
+**Junto a otros mods.** La línea sobre el prompt es compartida. baton dibuja su
+línea debajo de lo que dibujaron los otros mods, y nada mientras hay una encuesta.
+[`agents-panel`](https://github.com/mrshelll/agents-panel) 0.3.0 se apila con
+ella: su recuadro arriba y la línea de baton debajo, en cualquier orden de carga.
+Las versiones anteriores ceden la franja entera cuando algo se dibuja debajo, así
+que según el orden de carga su recuadro desaparece: actualiza a 0.3.0. Una tarjeta
+de `clear-questions` sigue mandando: mientras hay una pregunta, `agents-panel` se
+aparta como siempre, y la línea de baton queda bajo la tarjeta.
+
 ## Instalación
 
 ```bash
@@ -293,7 +458,7 @@ claude plugin install baton@baton
 Comprueba que quedó bien:
 
 ```bash
-/hooks                                    # baton en SessionStart, PostCompact y Stop
+/hooks                                    # baton en SessionStart, PreCompact, PostCompact, PostToolBatch y Stop
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor
 ```
 
@@ -477,6 +642,7 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
   "cooldown_minutes": 30,
   "receipt": true,
   "receipt_lines": 12,
+  "display": "receipt",
   "language": "es",
   "discovery": { "depth": 2, "max_dirs": 400 },
   "context_window": {
@@ -497,6 +663,7 @@ Todo es opcional. `~/.claude/baton.json` para tu preferencia general,
 | `cooldown_minutes` | `30` | Mínimo entre dos peticiones automáticas |
 | `receipt` | `true` | Si baton imprime algo en pantalla al arrancar la sesión |
 | `receipt_lines` | `12` | Líneas que el recibo añade bajo la primera; `0` deja solo la primera |
+| `display` | `receipt` | Quién te cuenta lo que hizo baton: las líneas de los hooks (`receipt`) o la franja y el panel del mod (`panel`). La marca del propio mod manda cuando llega; `panel` solo para cuando no llega |
 | `language` | `en` | Idioma de todo lo que lee un humano |
 | `discovery.depth` | `2` | Cuántos niveles se buscan proyectos (1-4). **Solo en la raíz** |
 | `discovery.max_dirs` | `400` | Tope de carpetas miradas por escaneo |
@@ -549,7 +716,7 @@ en vez de adivinar.
 ## Comprobar que tu instalación funciona de verdad
 
 Los tests unitarios no ven los fallos que solo aparecen en una instalación real.
-Estas cinco comprobaciones sí, y son las que destaparon el bug de frescura de la
+Estas comprobaciones sí, y son las que destaparon el bug de frescura de la
 0.3.1 que 211 tests unitarios no habían visto. Llevan dos minutos.
 
 **1. El hook dispara.** Abre una sesión en un proyecto donde hayas usado `/baton`.
@@ -560,7 +727,8 @@ SessionStart:startup says: baton: traspaso inyectado -- modo memory, N líneas, 
 ```
 
 Debajo debe salir lo que quedó: bloqueos, un siguiente paso o el estado. Si no
-aparece ninguna línea, el hook no disparó. Ejecuta `doctor`.
+aparece ninguna línea, el hook no disparó. Ejecuta `doctor`. Con el mod de baton
+en la terminal no hay recibo: la comprobación 7 reemplaza a esta.
 
 **2. El modo memoria — la que define el producto.** Con un traspaso en `memory`,
 abre una sesión nueva y escribe algo trivial y sin relación, por ejemplo `hola`.
@@ -577,18 +745,30 @@ Mete una línea como `canary: xylophone-7731` en `## Estado` y pregunta a una se
 nueva *qué dice el canario*. Si responde, la inyección funciona. Si no, el traspaso
 llegó al fichero pero nunca al contexto: el fallo que ningún test unitario ve.
 
-**4. El ciclo automático.** Ejecuta `/compact`. Tras tu siguiente intercambio baton
-debería pedirte el traspaso solo, y **no volver a pedirlo**. Comprueba el rastro:
+**4. El traspaso al compactar.** En un proyecto donde hayas ejecutado `/baton`,
+tras unos cuantos intercambios, ejecuta `/compact`. Encima del resultado ves la
+instrucción que baton le pasó al resumidor, y al final `baton: traspaso listo.
+Escribe /clear para seguir en una sesión nueva.` —con el mod, lo dice la franja:
+`✓ traspaso listo`—. `baton.py show` debe mostrar un traspaso recién escrito, en
+modo `memory`. Sigue sin `/clear`: baton **no** debe pedirte el traspaso.
+Comprueba el rastro:
 
 ```bash
 cat .baton/local/log.jsonl
 ```
 
 ```
-stop          -> silent: nothing pending        (antes de compactar: no molesta)
-post-compact  -> summary saved, handoff pending (guarda y arma)
-stop          -> handoff requested              (pide, una vez)
+pre-compact   -> handoff block requested                       (se lo pide al resumidor)
+session-start -> silent: handoff travels in the compaction summary
+post-compact  -> summary saved, handoff written from compaction in memory mode
+stop          -> silent: context 9% of 1000k (model)           (nada que pedir)
 ```
+
+`session-start` y `post-compact` pueden salir en otro orden: Claude Code los corre
+a la vez. Si `post-compact` dice `summary saved, handoff pending; …`, el bloque no
+salió y el motivo va tras el punto y coma. Entonces el turno siguiente debe pedirte
+el traspaso solo, una vez (`stop -> handoff requested after compaction`), y **no
+volver a pedirlo**.
 
 **5. Dos proyectos en una carpeta.** Crea `<raiz>/a/` y `<raiz>/b/`. Desde una
 sesión abierta en `<raiz>`, trabaja en `a` y ejecuta `/baton`: debe preguntar en
@@ -611,17 +791,27 @@ esto en `.claude/baton.json`, para que los umbrales se crucen desde el primer tu
 
 Pide cualquier cosa que use una herramienta. Al terminar el turno deberías ver
 `baton: contexto al N%` y el modelo debería preguntarte, en una línea, si escribe
-el traspaso. Responde que no: sigue con lo suyo y **no vuelve a preguntar**.
-`baton.py doctor` muestra la última lectura. Si tu statusline enseña el contexto,
-el tamaño de la ventana tiene que coincidir exacto; los tokens van una respuesta
-por detrás, porque Claude Code escribe el transcript un paso después de sus hooks.
-Quita esas líneas al terminar.
+el traspaso. Responde que no: sigue con lo suyo y **no vuelve a preguntar**. Con
+el mod, nada interrumpe el turno: la franja muestra `⚠ contexto al N %` con
+`[ Escribir traspaso ]`. `baton.py doctor` muestra la última lectura. Si tu
+statusline enseña el contexto, el tamaño de la ventana tiene que coincidir exacto;
+los tokens van una respuesta por detrás, porque Claude Code escribe el transcript
+un paso después de sus hooks. Quita esas líneas al terminar.
+
+**7. La franja y el panel.** Con el mod cargado, abre una sesión en una terminal
+de al menos 144 columnas, en un proyecto cuyo traspaso tenga bloqueos. La franja
+dice `baton · ⚠ N pendientes` sobre el prompt, sin recibo arriba, y el panel se
+abre solo al lado de la conversación, con los bloqueos primero. Con `agents-panel`
+cargado también, su recuadro queda encima de la línea de baton. Ejecuta
+`/compact`: la franja pasa a `✓ traspaso listo` con `[ Sesión nueva ]`, y al
+pulsarlo empieza una sesión nueva que vuelve a abrir el panel si quedan bloqueos.
 
 ## Cuando no funciona
 
 Un hook que no dispara no da error: no da nada. Por eso hay cuatro capas:
 
-1. **El recibo** — su primera línea al inyectar. Si no la ves, no disparó.
+1. **El recibo** — su primera línea al inyectar. Si no la ves, no disparó. Con el
+   mod, la franja ocupa su lugar.
 2. **La bitácora** (`.baton/local/log.jsonl`) — es lo único que distingue *«no
    disparó»* de *«disparó y calló porque no había documento»*: idénticos desde
    fuera, con causas opuestas. La entrada de cada turno lleva el porcentaje de
@@ -644,6 +834,8 @@ respuesta por detrás—. Si el tamaño está mal, fija `context_window.budget_t
 ## Requisitos
 
 Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
+La franja y el panel necesitan un Claude Code que cargue mods (hecho sobre
+2.1.307); en uno que no los cargue, baton funciona como siempre.
 
 ## Desarrollo
 
@@ -655,6 +847,12 @@ Python 3 (stdlib, **cero dependencias**) y Claude Code. `git` es opcional.
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.
+
+El mod tiene sus propios tests, en TypeScript, que corre el propio Claude Code:
+
+```bash
+claude plugin test .
+```
 
 ## Lo que baton no hará nunca
 

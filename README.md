@@ -106,9 +106,10 @@ work.
 
 ## The automatic cycle
 
-While you work you aren't thinking about handoffs. baton is, at two moments, both
-at the end of a turn, when nothing is running: when the context window starts to
-fill, and right after the harness compacts.
+While you work you aren't thinking about handoffs. baton is, at three moments:
+when the context window starts to fill, at the end of a turn with nothing
+running; right before the harness compacts, through the model that writes the
+summary; and right after, if that did not produce one.
 
 ### Before the harness compacts: the context window
 
@@ -166,10 +167,87 @@ the table.
 At 65% that is nothing; at the very edge it could trigger the compaction it exists
 to get ahead of.
 
-### After the harness compacts
+### When the harness compacts
 
-If the window trigger was switched off, turned down or outrun by one very long
-turn, the compaction still comes. baton catches that too:
+Claude Code compacts in three ways: when the window fills, when you type
+`/compact`, and when the session sits idle. **Idle compaction** kicks in when the
+session has been quiet for close to an hour and the conversation is past 200,000
+tokens: it compacts just before the prompt cache expires, so coming back does not
+re-read the whole conversation uncached. It exists to save tokens, and it is
+worth keeping on.
+
+It also changes what baton has to catch. With a 1M window, idle compaction
+arrives at 20–30% of the context, long before the 65% threshold, so the threshold
+ask never comes. On one real project the context never went past 48%, and every
+handoff there came out of a compaction summary, asked for after coming back. A
+hook cannot even tell idle compaction from the window one: both arrive as `auto`.
+
+So baton writes the handoff right before any compaction, whatever started it:
+
+```mermaid
+sequenceDiagram
+    participant U as You
+    participant CC as Claude Code
+    participant S as Summarizer
+    participant B as baton
+    participant D as .baton/HANDOFF.md
+
+    Note over U,CC: idle, window full or /compact
+    CC->>B: PreCompact
+    B-->>CC: "after the summary, append the handoff"
+    CC->>S: the conversation plus that instruction
+    S-->>CC: summary and handoff block
+    CC->>B: PostCompact (carries compact_summary)
+    B->>D: block validated and written, memory mode
+    B-->>U: handoff ready, type /clear
+    U->>CC: /clear
+    CC->>B: SessionStart
+    B-->>CC: the fresh handoff
+```
+
+**`PreCompact` does work for this, through the summarizer.** Earlier versions of
+this README said it could not: a compaction has no model turn, and the binary
+rejects hooks that need a conversation — *"no conversation context is
+available"*. That is still true, but whatever a `PreCompact` hook prints is
+appended to the summarizer's instructions, and the summarizer is a model with the
+conversation in front of it. baton asks it to append the handoff after the
+summary, between `<baton-handoff>` marks, with the sections, the budget and the
+mode rule of the `baton` skill. `PostCompact` takes that block and writes it
+through the same path as `/baton` — same budget, same history — so nothing lands
+that a `/baton` would have refused.
+
+There is no extra call: the handoff comes out of the same request as the summary,
+with the cache warm, and only its output tokens are added. The turn baton used to
+force after a compaction, to draft from the summary, is gone.
+
+**Always in `memory` mode, whatever the block asks for.** Claude Code keeps the
+last messages verbatim and summarises only what came before them — in practice
+the model's last answer, usually the turn's conclusion. The summarizer never sees
+it, so the step it calls next may already be done. In testing that is exactly
+what happened: a block chose `continue` with a step already finished. A new
+session would have repeated it. `memory` only waits for you.
+
+**What you see.** On `/compact`, Claude Code shows the instruction baton passed
+to the summarizer — kept to 12 lines — and keeps it in the compacted context.
+Once the handoff is written:
+
+```
+baton: handoff ready. Type /clear to continue in a fresh session.
+```
+
+Claude Code prints it after its own `PostCompact [...] completed successfully:`
+prefix. The `/clear` is always yours. If you carry on in the compacted session
+instead, baton stays quiet: the handoff is saved. And that session does not get
+the old handoff injected on top of the summary that carries the new one.
+
+**Only where `/baton` would write without asking**: the session's active project,
+or the root of a plain repo. At a root with several projects and none loaded,
+baton prints nothing and the compaction goes the way below.
+
+**If the block does not come out, baton asks right after.** The summarizer left
+it out, it was cut, it did not fit the budget, a `/baton` was mid-draft, or there
+was no clear destination: baton keeps the summary, arms a flag, and asks for the
+handoff at the end of the next turn.
 
 ```mermaid
 sequenceDiagram
@@ -195,10 +273,6 @@ sequenceDiagram
 
 **Why ask right after it.** The context has just been emptied and the summary is
 fresh: it is the cheapest moment in the session to draft.
-
-`PreCompact` cannot do this: a compaction has no model turn. The binary itself
-says so when it rejects hooks that need a conversation — *"no conversation
-context is available"*.
 
 **At most one interruption per threshold and per compaction**, with the harness's
 native loop guard (`stop_hook_active`) and a 30-minute cooldown that both reasons
@@ -280,6 +354,93 @@ against it overflows the indent the harness prints it inside — at which point
 the terminal wraps the remainder to column zero, under nothing, undoing the
 structure.
 
+With baton's mod in the terminal, the receipt moves to the panel, next.
+
+## The band and the panel
+
+baton also brings a mod for Claude Code's terminal, so it can be used with clicks
+instead of commands: a line always visible above the prompt — the band — and a
+panel with the whole handoff.
+
+| When | The band reads | Button |
+|---|---|---|
+| Normal | `baton · handoff 2 h ago · memory` | |
+| After a compaction wrote it | `baton · ✓ handoff ready · just now` | `[ New session ]` |
+| A threshold was crossed | `baton · ⚠ context at 65 %` | `[ Write handoff ]` |
+| The handoff has blockers | `baton · ⚠ 2 open items · 3 h ago` | |
+| No handoff yet | `baton · no handoff in this project` | `[ Write handoff ]` |
+| The handoff cannot be read | `baton · ⚠ could not read the handoff` | |
+
+Clicking the line opens the panel; `click → panel` sits on the right when it
+fits. `[ New session ]` runs `/clear` for you, as if you had typed it.
+`[ Write handoff ]` runs `/baton:baton`. No button has a key: a digit typed into
+an empty prompt never presses anything.
+
+**The panel** is what the receipt shows, whole:
+
+```
+baton · my-project                                        ✓ Handoff ready
+memory · written just now, on compaction · 42 lines · context 8 %
+[ New session ]   Write handoff
+
+⚠ Blockers (2)
+  1. …
+  2. …
+Next step
+  …
+State
+  …
+▸ Decisions and why (5)   ▸ Traps (4)
+
+Other projects
+  radar · memory · 2 d ago
+```
+
+- **The header** says where and how it stands: the status in a word with its
+  icon, the mode, when and how it was written, its size and how full the context
+  is now. A handoff older than the code carries the freshness warning.
+- **One main action**, the one for the moment: `New session` after a compaction,
+  `Write handoff` otherwise.
+- **Blockers first**, then the next step, then the state. Decisions and traps are
+  folded under their names; a long section shows six items and `see more`.
+- **Other projects** under the same root open in the same panel, as
+  `baton › radar` with a `Back` button. That view only reads: `/baton` writes the
+  session's own project, never the one on screen.
+
+**It opens on its own** at startup and after `/clear` when the handoff has
+blockers, beside the conversation if the terminal is at least 144 columns wide.
+Narrower, it waits for your click: that is Claude Code's rule for a panel nobody
+asked for.
+
+**With the mod, the hooks step back.** No receipt at session start, no line after
+a compaction — the band says it — and crossing a threshold no longer interrupts
+the turn: the band shows `⚠ context at 65 %` with `[ Write handoff ]`. The 60%
+warning to the model stays, and so does the ask after a compaction whose block
+did not come out: that one is not a threshold.
+
+**`/baton:baton` stays.** Everything the buttons do, the command does; the
+buttons type it for you.
+
+**Terminal only.** The mod draws only in the terminal. Without it — a Claude Code
+without mods, or the desktop app, VS Code or mobile — everything works as before:
+the receipt, the `Stop` that asks at a threshold, and the command. Writing the
+handoff at compaction uses plain hooks, so it works on every surface.
+
+The hooks know the mod is there because it marks their input when the session has
+a terminal. When the mark does not arrive, they behave as if there were no mod: a
+receipt too many beats none. `"display": "panel"` in the config tells them the
+same from your side; use it only with the mod, because without it you lose the
+receipt and the threshold ask.
+
+**Next to other mods.** The line above the prompt is shared. baton draws its line
+under whatever the other mods drew, and nothing while a survey is up.
+[`agents-panel`](https://github.com/mrshelll/agents-panel) 0.3.0 stacks with it:
+its box above, baton's line below, in either load order. Earlier versions give
+up the whole band when something is drawn under them, so depending on load order
+their box disappears: update to 0.3.0. A `clear-questions` card still comes
+first: while a question is up, `agents-panel` steps aside as it always did, and
+baton's line stays under the card.
+
 ## Install
 
 ```bash
@@ -295,7 +456,7 @@ claude plugin install baton@baton
 Check it landed:
 
 ```bash
-/hooks                                    # baton on SessionStart, PostCompact and Stop
+/hooks                                    # baton on SessionStart, PreCompact, PostCompact, PostToolBatch and Stop
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/baton.py" doctor
 ```
 
@@ -477,6 +638,7 @@ All optional. `~/.claude/baton.json` for your general preference,
   "cooldown_minutes": 30,
   "receipt": true,
   "receipt_lines": 12,
+  "display": "receipt",
   "language": "en",
   "discovery": { "depth": 2, "max_dirs": 400 },
   "context_window": {
@@ -497,6 +659,7 @@ All optional. `~/.claude/baton.json` for your general preference,
 | `cooldown_minutes` | `30` | Minimum between automatic requests |
 | `receipt` | `true` | Whether baton prints anything on screen at session start |
 | `receipt_lines` | `12` | Lines the receipt may add under the first; `0` for the first line alone |
+| `display` | `receipt` | Who tells you what baton did: the hooks' own lines (`receipt`) or the mod's band and panel (`panel`). The mod's own mark wins when it arrives; `panel` only for when it does not |
 | `language` | `en` | Language of everything a human reads |
 | `discovery.depth` | `2` | How far down projects are looked for (1-4). **Root only** |
 | `discovery.max_dirs` | `400` | Cap on directories examined per scan |
@@ -543,7 +706,7 @@ change; when baton does not understand it, it stays quiet rather than guess.
 
 ## Checking your install actually works
 
-Unit tests cannot see the failures that only appear on a real install. These five
+Unit tests cannot see the failures that only appear on a real install. These
 checks can, and they are the ones that caught the freshness bug in 0.3.1 that 211
 unit tests had missed. They take two minutes.
 
@@ -555,7 +718,8 @@ SessionStart:startup says: baton: handoff injected -- memory mode, N lines, writ
 ```
 
 Under it you should see what was left: blockers, a next step, or the state. No
-line at all means the hook did not fire. Run `doctor`.
+line at all means the hook did not fire. Run `doctor`. With baton's mod in the
+terminal there is no receipt: check 7 replaces this one.
 
 **2. Memory mode — the one that defines the product.** With a `memory` handoff,
 open a fresh session and type something trivial and unrelated, like `hello`.
@@ -572,18 +736,30 @@ line like `canary: xylophone-7731` in `## State`, then ask a fresh session *what
 does the canary say*. If it answers, the injection works. If it doesn't, the
 handoff reached the file but never the context — the failure no unit test sees.
 
-**4. The automatic cycle.** Run `/compact`. After your next exchange baton should
-ask for the handoff on its own, and **not ask again**. Check the trail:
+**4. The handoff at compaction.** In a project where you have run `/baton`, after
+a few exchanges, run `/compact`. Above the result you see the instruction baton
+passed to the summarizer, and at the end `baton: handoff ready. Type /clear to
+continue in a fresh session.` — with the mod, the band says `✓ handoff ready`
+instead. `baton.py show` must show a handoff written just now, in `memory` mode.
+Carry on without `/clear`: baton must **not** ask for the handoff. Check the
+trail:
 
 ```bash
 cat .baton/local/log.jsonl
 ```
 
 ```
-stop          -> silent: nothing pending        (before compacting: no interruption)
-post-compact  -> summary saved, handoff pending (saves and arms)
-stop          -> handoff requested              (asks, once)
+pre-compact   -> handoff block requested                       (asks the summarizer)
+session-start -> silent: handoff travels in the compaction summary
+post-compact  -> summary saved, handoff written from compaction in memory mode
+stop          -> silent: context 9% of 1000k (model)           (nothing to ask)
 ```
+
+`session-start` and `post-compact` may swap places: Claude Code runs them at the
+same time. If `post-compact` reads `summary saved, handoff pending; …`, the block
+did not come out and the reason follows the semicolon. Then the next turn must ask
+for the handoff on its own, once (`stop -> handoff requested after compaction`),
+and **not ask again**.
 
 **5. Two projects in one folder.** Create `<root>/a/` and `<root>/b/`. From a
 session opened at `<root>`, work on `a` and run `/baton`: it must ask in one line
@@ -606,17 +782,27 @@ whether the handoff belongs to `a` or to the root, and write to
 
 Ask for anything that uses a tool. When the turn ends you should see
 `baton: context at N%` and the model should ask, in one line, whether to write the
-handoff. Answer no: it carries on, and **does not ask again**. `baton.py doctor`
-prints the last reading. If your statusline shows the context, the window size
-must match it exactly; the tokens trail it by the last answer, because Claude Code
-writes the transcript one step behind its hooks. Remove those lines when you are
-done.
+handoff. Answer no: it carries on, and **does not ask again**. With the mod,
+nothing interrupts the turn: the band shows `⚠ context at N %` with
+`[ Write handoff ]`. `baton.py doctor` prints the last reading. If your statusline
+shows the context, the window size must match it exactly; the tokens trail it by
+the last answer, because Claude Code writes the transcript one step behind its
+hooks. Remove those lines when you are done.
+
+**7. The band and the panel.** With the mod loaded, open a session in a terminal
+at least 144 columns wide, in a project whose handoff has blockers. The band
+reads `baton · ⚠ N open items` above the prompt, with no receipt at the top, and
+the panel opens on its own beside the conversation, blockers first. With
+`agents-panel` loaded too, its box sits above baton's line. Run `/compact`: the
+band turns to `✓ handoff ready` with `[ New session ]`, and pressing it starts a
+fresh session that opens the panel again if blockers are left.
 
 ## When it doesn't work
 
 A hook that doesn't fire gives no error: it gives nothing. Hence four layers:
 
-1. **The receipt** — its first line on injection. No line, no fire.
+1. **The receipt** — its first line on injection. No line, no fire. With the mod,
+   the band takes its place.
 2. **The log** (`.baton/local/log.jsonl`) — the only thing telling *"didn't fire"*
    apart from *"fired and stayed quiet because there was no document"*: identical
    from outside, opposite causes. Every turn's entry carries the context
@@ -639,6 +825,8 @@ answer. If the size is wrong, set `context_window.budget_tokens`.
 ## Requirements
 
 Python 3 (stdlib, **zero dependencies**) and Claude Code. `git` is optional.
+The band and the panel need a Claude Code that loads mods (built against
+2.1.307); on one that does not, baton works as it always did.
 
 ## Development
 
@@ -651,6 +839,12 @@ hook tests invoke the script as a subprocess with JSON on stdin, exactly like th
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case
 is the base case.
+
+The mod has its own tests, in TypeScript, run by Claude Code itself:
+
+```bash
+claude plugin test .
+```
 
 To validate the README diagrams against the real Mermaid parser:
 
