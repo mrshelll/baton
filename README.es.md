@@ -244,12 +244,13 @@ recibe el traspaso viejo encima del resumen que trae el nuevo.
 
 **Solo donde `/baton` escribiría sin preguntar**: el proyecto activo de la
 sesión, o la raíz de un repo normal. En una raíz con varios proyectos y ninguno
-cargado, baton no imprime nada y la compactación sigue el camino de abajo.
+cargado, baton no imprime nada, y la compactación sigue el camino de abajo si la
+raíz tiene traspaso propio; si no, baton no interviene, como antes.
 
 **Si el bloque no sale, baton pregunta justo después.** El resumidor no lo
 escribió, salió cortado, no cupo en el presupuesto, había un `/baton` a medio
-redactar, o no había un destino claro: baton guarda el resumen, arma una bandera
-y pide el traspaso al terminar el turno siguiente.
+redactar, o no había un destino claro pero la raíz tiene traspaso: baton guarda
+el resumen, arma una bandera y pide el traspaso al terminar el turno siguiente.
 
 ```mermaid
 sequenceDiagram

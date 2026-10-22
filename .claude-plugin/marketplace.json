@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "baton",
-      "description": "A handoff that does not grow: whole rewrite, hard budget enforced by code, continue/memory modes and a freshness notice against git. English and Spanish.",
+      "description": "A handoff that does not grow: whole rewrite, hard budget enforced by code, continue/memory modes and a freshness notice against git. Right before any compaction (idle, auto or /compact) it has the summarizer write the handoff. An optional terminal mod draws a band above the prompt and a pane with the handoff. English and Spanish.",
       "version": "0.6.0",
       "source": "./",
       "author": {

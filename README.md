@@ -242,12 +242,13 @@ the old handoff injected on top of the summary that carries the new one.
 
 **Only where `/baton` would write without asking**: the session's active project,
 or the root of a plain repo. At a root with several projects and none loaded,
-baton prints nothing and the compaction goes the way below.
+baton prints nothing, and the compaction goes the way below if the root has a
+handoff of its own; otherwise baton stays out of it, as before.
 
 **If the block does not come out, baton asks right after.** The summarizer left
 it out, it was cut, it did not fit the budget, a `/baton` was mid-draft, or there
-was no clear destination: baton keeps the summary, arms a flag, and asks for the
-handoff at the end of the next turn.
+was no clear destination but the root has a handoff: baton keeps the summary, arms
+a flag, and asks for the handoff at the end of the next turn.
 
 ```mermaid
 sequenceDiagram
