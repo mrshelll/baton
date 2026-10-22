@@ -42,7 +42,8 @@ gives baton a band and a panel so it can be used with clicks.
   written, its size and the current context. Other projects under the same root
   open in it, read-only, with a way back. It opens on its own at startup and
   after `/clear` when the handoff has blockers, beside the conversation from 144
-  columns; narrower, it waits for a click.
+  columns; narrower, it waits for a click. Without the mouse, `ctrl+x tab` gives
+  the band the focus, `Tab` reaches baton's line and `Enter` opens the panel.
 - **`display`** (`receipt` by default, or `panel`): who tells you what baton did.
   The mod marks the hooks' input itself when the session has a terminal, and that
   mark wins; `panel` covers the case where it does not arrive. Without the mod it
@@ -73,7 +74,10 @@ gives baton a band and a panel so it can be used with clicks.
   versions of `agents-panel` gave it up whole when something was drawn under
   them, so depending on load order their box disappeared. `agents-panel` 0.3.0
   stacks with baton's line — its box above, baton below — and a `clear-questions`
-  card still comes first.
+  card still comes first. baton's line stays under that card only when
+  `clear-questions` runs below baton; in the other order `clear-questions` 0.2.0
+  draws its card alone, and baton's line comes back once the question is
+  answered.
 
 ### Fixed
 - **An unexpected error after compacting showed up as raw JSON.** Claude Code

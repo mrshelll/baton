@@ -383,6 +383,10 @@ Un clic en la línea abre el panel; `clic → panel` va a la derecha cuando cabe
 `[ Escribir traspaso ]` ejecuta `/baton:baton`. Ningún botón tiene tecla: un
 dígito escrito en el prompt vacío nunca pulsa nada.
 
+Sin ratón: `ctrl+x tab` le da el foco a la franja, `Tab` o las flechas lo llevan
+a la línea de baton o a un botón, y `Enter` lo pulsa; sobre la línea, abre el
+panel. `Esc` devuelve el foco al prompt.
+
 Un umbral y un traspaso se turnan: la franja muestra el más reciente. Escribir
 el traspaso después de `⚠ contexto al 65 %` apaga el aviso, y un umbral cruzado
 después de que una compactación escribiera el traspaso reemplaza a
@@ -453,7 +457,11 @@ ella: su recuadro arriba y la línea de baton debajo, en cualquier orden de carg
 Las versiones anteriores ceden la franja entera cuando algo se dibuja debajo, así
 que según el orden de carga su recuadro desaparece: actualiza a 0.3.0. Una tarjeta
 de `clear-questions` sigue mandando: mientras hay una pregunta, `agents-panel` se
-aparta como siempre, y la línea de baton queda bajo la tarjeta.
+aparta como siempre. Que la línea de baton siga ahí depende del orden en que
+corren los dos. Con `clear-questions` debajo de baton en la cadena, baton recibe
+la tarjeta y dibuja su línea debajo. En el otro orden, `clear-questions` 0.2.0
+devuelve su tarjeta sin dejar dibujar a los mods de debajo, así que la línea de
+baton desaparece mientras está la pregunta y vuelve cuando la respondes.
 
 ## Instalación
 

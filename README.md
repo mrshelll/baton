@@ -383,6 +383,10 @@ fits. `[ New session ]` runs `/clear` for you, as if you had typed it.
 `[ Write handoff ]` runs `/baton:baton`. No button has a key: a digit typed into
 an empty prompt never presses anything.
 
+Without the mouse: `ctrl+x tab` gives the band the focus, `Tab` or the arrows
+move it onto baton's line or a button, and `Enter` presses it — on the line, it
+opens the panel. `Esc` gives the focus back to the prompt.
+
 A threshold and a handoff take turns: the band shows whichever came last.
 Writing the handoff after `⚠ context at 65 %` settles the warning, and a
 threshold crossed after a compaction wrote the handoff replaces
@@ -450,8 +454,12 @@ under whatever the other mods drew, and nothing while a survey is up.
 its box above, baton's line below, in either load order. Earlier versions give
 up the whole band when something is drawn under them, so depending on load order
 their box disappears: update to 0.3.0. A `clear-questions` card still comes
-first: while a question is up, `agents-panel` steps aside as it always did, and
-baton's line stays under the card.
+first: while a question is up, `agents-panel` steps aside as it always did.
+Whether baton's line stays depends on the order the two run in. With
+`clear-questions` below baton in the chain, baton gets the card and draws its
+line under it. In the other order, `clear-questions` 0.2.0 returns its card
+without letting the mods below it draw, so baton's line is gone while the
+question is up and comes back once it is answered.
 
 ## Install
 
