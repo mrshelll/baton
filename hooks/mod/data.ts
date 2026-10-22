@@ -196,21 +196,27 @@ let latest = 0
 /**
  * Loads the panel for the session as it stands now (its id and folder) and
  * keeps it in the mod's state; the drawings that read it are drawn again.
- * Never throws: on any failure the state keeps what it had.
+ *
+ * Hands back what it loaded, written or not: a newer load may have taken the
+ * state, and `current($)` may not hold this session's panel yet (after a
+ * /clear, the one before it). Null when nothing was loaded. Never throws: on
+ * any failure the state keeps what it had.
  */
-export async function refresh($: EngineInterface): Promise<void> {
+export async function refresh($: EngineInterface): Promise<PanelData | null> {
   const ticket = ++latest
+  let data: PanelData | null = null
   try {
     const [sessionId, cwd] = await Promise.all([$.session.id(), $.session.cwd()])
-    const data = await loadPanel($, sessionId, cwd)
-    if (ticket !== latest) return
+    data = await loadPanel($, sessionId, cwd)
+    if (ticket !== latest) return data
     const at = await $.clock.now()
-    if (ticket !== latest) return
+    if (ticket !== latest) return data
     await update($, panel, () => data)
     await update($, loadedAt, () => at)
   } catch (error) {
     why($, `state not written: ${error instanceof Error ? error.message : String(error)}`)
   }
+  return data
 }
 
 /**
@@ -231,6 +237,8 @@ export async function showProject($: EngineInterface, other: PanelOther): Promis
     const data = await loadPanel($, sessionId, cwd, other.rel)
     if (ticket !== shown) return
     await update($, viewed, () => ({ rel: other.rel, name: other.name, data }))
+    // A return to the own project may have landed during that write.
+    if (ticket !== shown) return
     await update($, view, () => ({ ...OWN_VIEW, project: other.rel }))
   } catch (error) {
     why($, `project not shown: ${error instanceof Error ? error.message : String(error)}`)

@@ -91,15 +91,17 @@ async function contextPercent($: EngineInterface): Promise<number | null> {
 
 /**
  * After a startup or a /clear: loads the new session's panel and opens the
- * pane, unasked and unfocused, only when its handoff has blockers left (the
- * band's count). The engine places an unasked pane from 144 columns; below
+ * pane, unasked and unfocused, only when that panel's handoff has blockers
+ * left (the band's count). The engine places an unasked pane from 144 columns; below
  * that it waits for the click. On the session's own project. Never throws.
  */
 async function openOnItsOwn($: EngineInterface, source: string): Promise<void> {
-  await refresh($)
+  // What this load brought, never `current($)`: a newer load (the band's own,
+  // right after «Sesión nueva») may not have written yet, leaving there the
+  // panel of the session before the /clear.
+  const data = await refresh($)
   if (source !== 'startup' && source !== 'clear') return
   try {
-    const data = await current($)
     if (data === null || pending(data) === 0 || !(await isDrawn($))) return
     await showOwn($, false)
     await $.ui.open({ id: PANE, title: 'baton' })

@@ -79,11 +79,16 @@ type WorldOptions = {
   exitCode?: number
   /** What `--project <rel>` answers. */
   other?: PanelData
+  /** What baton.py answers for a session id other than `sesión 1` (`setSession`). */
+  newSession?: PanelData
+  /** While it holds a promise, the mod's write of this state key waits on it before it lands. */
+  holdWrite?: { key: string; gate: Promise<void> | null; reached?: () => void }
 }
 
 /**
- * The engine beneath the mod. baton.py answers `data`, or `other` for a run
- * with `--project`; every argv is kept. `$.ui.open` and the hooks' stdin are
+ * The engine beneath the mod. baton.py answers `data` for the session
+ * `sesión 1`, `newSession` for any other (`setSession`, as after a /clear), or
+ * `other` for a run with `--project`; every argv is kept. `$.ui.open` and the hooks' stdin are
  * recorded; `loads(n)` settles once the mod finished `n` loads of its own panel.
  */
 function world(on: On, data: PanelData, opts: WorldOptions = {}) {
@@ -97,7 +102,8 @@ function world(on: On, data: PanelData, opts: WorldOptions = {}) {
   const opened = deferred<void>()
   mock.clock(on, { now: 5_000 })
   on('session.surfaces', () => ({ value: (opts.surfaces ?? ['terminal']) as RenderSurface[] }))
-  on('session.id', () => ({ value: 'sesión 1' }))
+  let session = 'sesión 1'
+  on('session.id', () => ({ value: session }))
   on('session.cwd', () => ({ value: '/Users/someone/Mis proyectos/proyecto uno' }))
   on('session.usage', () => {
     if (opts.context === 'deny') return { deny: 'no usage here' }
@@ -112,10 +118,16 @@ function world(on: On, data: PanelData, opts: WorldOptions = {}) {
       return { value: { exitCode: opts.exitCode, stdout: '', stderr: 'boom', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     const rel = e.argv.includes('--project') ? e.argv.at(-1) : undefined
-    const answer = rel === undefined ? data : rel === 'c/dolores' ? DOLORES : (opts.other ?? RADAR)
+    const own = e.argv.includes('sesión 1') ? data : (opts.newSession ?? data)
+    const answer = rel === undefined ? own : rel === 'c/dolores' ? DOLORES : (opts.other ?? RADAR)
     return { value: { exitCode: 0, stdout: JSON.stringify(answer), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('state.set', async (_$, e, next) => {
+    const held = opts.holdWrite
+    if (held?.gate && e.plugin === 'baton' && e.key === held.key) {
+      held.reached?.()
+      await held.gate
+    }
     const r = await next(e)
     if (e.plugin === 'baton' && e.key === 'loadedAt') {
       done += 1
@@ -141,7 +153,9 @@ function world(on: On, data: PanelData, opts: WorldOptions = {}) {
     else waiting.push({ n, settle: d.settle })
     return d.promise
   }
-  return { argvs, opens, stdin, toasts, runs, loads, opened: opened.promise }
+  /** The session id changes, as it does on a /clear. */
+  const setSession = (id: string) => { session = id }
+  return { argvs, opens, stdin, toasts, runs, loads, setSession, opened: opened.promise }
 }
 
 /** The panel loaded the way a session loads it: the end of a main-loop turn. */
@@ -476,6 +490,26 @@ test('a project still loading when the pane opens on its own does not take it ov
   expect(await ui.find({ key: 'baton:back' })).toBeUndefined()
 })
 
+test('a return to the own project that lands between the two writes of another one is not undone', async ($, on) => {
+  const write = deferred<void>()
+  const reached = deferred<void>()
+  const holdWrite: NonNullable<WorldOptions['holdWrite']> = { key: 'viewed', gate: write.promise, reached: () => reached.settle() }
+  const w = world(on, ES, { holdWrite })
+  await load($, w)
+  const ui = await mount($)
+  await ui.press({ key: 'baton:project:0' })
+  // The other project is loaded and its `viewed` write is on its way: the pane opens on its own now.
+  await reached.promise
+  holdWrite.gate = null
+  await $.classic.SessionStart({ source: 'clear' })
+  await w.opened
+  await settle()
+  write.settle()
+  await settle()
+  expect(await ui.find({ type: 'Text', text: 'baton · proyecto uno' })).toBeDefined()
+  expect(await ui.find({ key: 'baton:back' })).toBeUndefined()
+})
+
 test('another project with no handoff says so, with no hint to write that Volver could not keep', async ($, on) => {
   const w = world(on, ES, { other: { ...RADAR, state: 'none', handoff: null } })
   await load($, w)
@@ -544,15 +578,52 @@ test('before the first load, the pane is left to the engine', async ($, on) => {
 
 for (const source of ['startup', 'clear'] as const) {
   test(`after ${source}, with blockers left, the pane opens on its own (unfocused), once the new session loaded`, async ($, on) => {
-    const w = world(on, ES)
+    // The session before had nothing urgent: only the new session's data can open the pane.
+    const w = world(on, faces.calm(ES), { newSession: ES })
+    if (source === 'clear') await load($, w)
+    w.setSession('sesión 2')
     expect(await $.classic.SessionStart({ source })).toEqual({ additionalContext: ['from Python'] })
     await w.opened
     expect(w.opens).toEqual([{ id: 'baton', title: 'baton' }])
-    expect(w.argvs).toHaveLength(1)
-    expect(w.argvs[0]).toContain('sesión 1')
+    expect(w.argvs.at(-1)).toContain('sesión 2')
     expect(w.stdin[0]).toMatchObject({ source, baton_mod: true })
   })
 }
+
+// «Sesión nueva» runs /clear: the engine raises SessionStart(clear) inside it,
+// and the band's own reload starts right after, taking the newest ticket. The
+// auto-open's load ends first and writes nothing; it must still decide on the
+// new session's data it loaded, never on what the state held before.
+
+test('after /clear with a reload behind it: blockers before, none now, so the pane does not open', async ($, on) => {
+  const behind = deferred<void>()
+  let runs = 0
+  const w = world(on, ES, { newSession: faces.calm(ES), hold: argv => (argv.includes('sesión 2') && ++runs === 2 ? behind.promise : null) })
+  await load($, w)
+  w.setSession('sesión 2')
+  await $.classic.SessionStart({ source: 'clear' })
+  void $.turn.complete({ answer: 'x', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+  await settle()
+  expect(w.opens).toEqual([])
+  behind.settle()
+  await w.loads(2)
+  await settle()
+  expect(w.opens).toEqual([])
+})
+
+test('after /clear with a reload behind it: none before, blockers now, so the pane opens', async ($, on) => {
+  const behind = deferred<void>()
+  let runs = 0
+  const w = world(on, faces.calm(ES), { newSession: ES, hold: argv => (argv.includes('sesión 2') && ++runs === 2 ? behind.promise : null) })
+  await load($, w)
+  w.setSession('sesión 2')
+  await $.classic.SessionStart({ source: 'clear' })
+  void $.turn.complete({ answer: 'x', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+  await w.opened
+  expect(w.opens).toEqual([{ id: 'baton', title: 'baton' }])
+  behind.settle()
+  await w.loads(2)
+})
 
 for (const [why, data] of Object.entries({ 'nothing urgent': faces.calm(ES), 'an empty blockers section': faces.hollow(ES), 'no handoff': faces.none(ES), 'an error': faces.error(ES) })) {
   test(`after startup with ${why}, the pane waits for the click`, async ($, on) => {
