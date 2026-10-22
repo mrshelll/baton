@@ -76,16 +76,8 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
     source = entry.get("source") or "startup"
     if source not in cfg["inject_on"]:
         return {}, f"silent: '{source}' is not in inject_on"
-    if source == "compact":
-        # This runs before -- or alongside -- the PostCompact, so it cannot know
-        # whether the block came out. It knows whether this session asked for
-        # one, where the PreCompact asked: then the summary carries a handoff
-        # newer than the one on disk. If the block never comes, the summary is
-        # still there and the flag asks for a handoff at the next Stop.
-        dest, _ = _compaction_destination(entry, paths, root, found)
-        if dest is not None and storage.read_compact_request(
-                dest.paths, entry.get("session_id") or "") is not None:
-            return {}, "silent: handoff travels in the compaction summary"
+    if source == "compact" and _block_replaces(entry, paths, root, found):
+        return {}, "silent: handoff travels in the compaction summary"
 
     strings = output.load_strings(cfg["language"])
     # With the mod, the panel shows what the receipt showed; the handoff still
@@ -184,6 +176,27 @@ def _compaction_destination(entry: dict, paths: storage.Paths, root, found):
         return None, why
     cfg = config.load(target.path, parent=root)
     return _Destination(target, why, cfg, output.load_strings(cfg["language"])), why
+
+
+def _block_replaces(entry: dict, paths: storage.Paths, root, found) -> bool:
+    """True when this session's PreCompact asked for the block that replaces the
+    very handoff the SessionStart of `compact` would inject.
+
+    That SessionStart runs before -- or alongside -- the PostCompact, so it cannot
+    know whether the block came out; it knows whether one was asked, and where.
+    Only when the destination's document is this one does the summary carry a
+    newer version of it. With an active sub-project the block replaces that
+    project's handoff, not the root's nor the index: those are not in the
+    summary. Any failure reads as False -- injecting as today beats leaving the
+    person with an error notice and nothing else."""
+    try:
+        dest, _ = _compaction_destination(entry, paths, root, found)
+        return (dest is not None
+                and dest.paths.document.resolve() == paths.document.resolve()
+                and storage.read_compact_request(
+                    dest.paths, entry.get("session_id") or "") is not None)
+    except Exception:  # noqa: BLE001 - the fallback is today's injection
+        return False
 
 
 def _pre_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[str, str]:

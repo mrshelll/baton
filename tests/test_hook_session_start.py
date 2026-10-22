@@ -178,6 +178,51 @@ class TestAfterACompaction(Base):
         _, out, _ = self.start(source="compact")
         self.assertIn("this is where we are", self.context(out))
 
+    def test_an_active_projects_note_does_not_silence_the_roots_handoff(self):
+        # The block replaces radar's handoff, not the root's: the root's handoff
+        # and the index are not in the summary, and silencing them loses them.
+        from lib import projects
+        self.write_handoff()
+        radar = self.project / "radar"
+        storage.Paths(radar).document.parent.mkdir(parents=True)
+        storage.Paths(radar).document.write_text(
+            "---\nbaton: 1\nmode: memory\n---\n## State\nradar state\n", encoding="utf-8")
+        found = projects.discover(self.project)
+        target = next(p for p in found.projects if p.name == "radar")
+        projects.set_active(self.project, target, session="test-session")
+        storage.note_compact_request(storage.Paths(radar), "test-session")
+        _, out, _ = self.start(source="compact")
+        injected = self.context(out)
+        self.assertIn("this is where we are", injected)
+        self.assertIn("radar", injected)
+
+    def test_a_failure_resolving_the_note_injects_as_today(self):
+        # Never leave the person with nothing: if the check itself breaks, the
+        # handoff on disk is better than an error notice.
+        import importlib.util
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location(
+            "baton_hook_destination_fails", REPO_ROOT / "hooks" / "baton_hook.py")
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+
+        def boom(*_):
+            raise RuntimeError("config on fire")
+
+        self.write_handoff()
+        storage.note_compact_request(storage.Paths(self.project), "test-session")
+        stdin = io.StringIO(json.dumps(self.payload("SessionStart", source="compact")))
+        captured = io.StringIO()
+        with mock.patch.object(hook, "_compaction_destination", boom), \
+                mock.patch.object(sys, "argv", ["baton_hook.py", "session-start"]), \
+                mock.patch.object(sys, "stdin", stdin), redirect_stdout(captured):
+            self.assertEqual(hook.main(), 0)
+        out = json.loads(captured.getvalue())
+        self.assertIn("this is where we are", self.context(out))
+        self.assertNotIn("could not complete", out.get("systemMessage", ""))
+
     def test_the_note_only_silences_a_compaction(self):
         # A /clear right after is a new session: it needs the handoff on disk,
         # which by then is the one the compaction wrote.
