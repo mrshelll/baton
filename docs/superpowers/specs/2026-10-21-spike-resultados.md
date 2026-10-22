@@ -25,6 +25,17 @@ Nada de esto tocó una sesión ni un proyecto real de Miguel.
 - **Sesión grande:** `claude -p` leyendo el código de baton en tres turnos, hasta 114 140 tokens
   (`preTokens`). Después, `claude -p --resume <id> --fork-session ... "/compact"` dos veces, cada una
   sobre una bifurcación, así que la sesión base quedó sin compactar.
+- **Versión de Claude Code.** Durante el spike, Claude Code se actualizó solo a 2.1.308. Pasó durante
+  la primera sesión interactiva de S1, lanzada con el comando `claude`. Esa sesión todavía corrió en
+  2.1.307: su banner dice `Claude Code v2.1.307` y al final sale `✔ Update installed · Restart to update`.
+  - **Antes de la actualización, con `claude`, que aún era 2.1.307:** el primer
+    `claude plugin validate`, la corrida corta `-p` de S1, S2 y S3, y las sesiones interactivas de S1.
+  - **Después, todo con la ruta fija `~/.local/share/claude/versions/2.1.307` y
+    `DISABLE_AUTOUPDATER=1`:** los `validate` siguientes, S4 a 160 y 120 columnas, los tres turnos que
+    hicieron crecer la sesión, las dos compactaciones `-p` y la compactación interactiva de S6.
+  - **Ningún resultado se obtuvo en 2.1.308.** Las búsquedas en el binario también se hicieron en el
+    de 2.1.307.
+  - **Queda cambiado en la máquina:** `~/.local/bin/claude` apunta ahora a `versions/2.1.308`.
 
 ## S1 — Hooks clásicos y `modules` en un mismo `hooks/hooks.json`: **pasa**
 
@@ -97,7 +108,18 @@ Así que la señal vale también para el caso que el diseño exige.
 - **A verificar en la prueba manual de la Tarea 12**, con los mods reales de Miguel cargados
   (`agents-panel`, `clear-questions`).
 
-## S5 — El resumidor entrega el bloque: **sí, 3 de 3**
+## S5 — El resumidor entrega el bloque: **el formato pasa 3 de 3; el contenido no**
+
+**Resultado:**
+
+- **El formato pasa en las tres corridas:** bloque al final, modo válido, dentro de 60 líneas y
+  aceptado por `baton.py write`.
+- **El contenido falla en las corridas 1 y 2:** dan por pendiente algo que ya estaba hecho, y la 2
+  eligió `continue` con ese paso. La causa es que el resumidor no ve los mensajes más recientes (ver
+  «Hallazgos», punto 1).
+
+**Decisión del controlador (Ruling 5):** los traspasos que salen del resumen se fuerzan a `memory`, y
+la instrucción avisa de que los mensajes más recientes quedan fuera de su vista.
 
 Instrucción provisional en `PreCompact`, en inglés, escrita a mano según la interfaz de la Tarea 4.
 Pedía:
@@ -159,7 +181,12 @@ Consecuencias para las Tareas 4 y 5:
 - **Sin comprobar:** cómo se ve el `userDisplayMessage` en una compactación automática o en reposo,
   donde no hay comando `/compact`. Queda para la Tarea 12.
 
-## S7 — Costo del precálculo: **ningún modo rehace el resumen con la caché caducada en la configuración de Miguel**
+## S7 — Costo del precálculo: **no observado, con un riesgo residual**
+
+**Resultado:** no se observó ningún resumen rehecho con la caché caducada. Queda un caso posible, sin
+observar (ver «Riesgo residual» al final de esta sección).
+
+**Decisión del controlador (Ruling 9):** se acepta el riesgo residual; no es parada.
 
 **Lo medido** en `compact_boundary.compactMetadata`:
 
@@ -197,10 +224,26 @@ El resumidor leyó de caché 97k de los 114k: la caché estaba caliente.
   diseño, ese costo se acepta.
 - Y, según los datos, Miguel nunca ha tenido un precálculo que reutilizar.
 
-**Caso borde, sin observar.** En el modo `compact_on_return`, o si hubiera un precálculo listo de otra
-fuente, un `/compact` escrito a mano al volver con la caché ya caducada rehace el resumen en frío, por
-el `miss_hook`. Sin baton lo habría reutilizado. No es un modo de la compactación en reposo, y Miguel
-no está en `compact_on_return`. Se anota; no es motivo para parar.
+**Riesgo residual, sin observar.**
+
+- **Camino.** `/compact` escrito a mano → `compactManually` → comprobación de reutilización (función
+  `A` de 2.1.307).
+- **Por qué rehace el resumen.** Si el `PreCompact` de baton imprimió instrucciones, devuelve
+  `{hit: false, reuse: "miss_hook"}` antes de mirar el precálculo. Entonces se rehace el resumen en vez
+  de reutilizar uno listo.
+- **Cuándo pasaría en frío.** Solo si se juntan tres cosas:
+  - (1) existe un precálculo listo, por ejemplo del modo `compact_on_return` mientras Miguel no
+    estaba, o de otro disparador de precálculo;
+  - (2) Miguel vuelve después de que caducó la caché (más de una hora);
+  - (3) escribe `/compact` a mano en vez de seguir escribiendo.
+
+  En ese caso el resumen se rehace en frío. Sin baton se habría reutilizado.
+- **Lo que se sabe de Miguel:**
+  - el modo `compact` no pasa por aquí con la caché fría: dispara solo en caliente;
+  - Miguel no está en `compact_on_return`;
+  - ninguna de sus 30 compactaciones reales tiene `precomputed`, así que nunca ha reutilizado un
+    precálculo.
+- **No se puede vigilar desde fuera:** `miss_hook` solo va a telemetría.
 
 ## Hallazgos que cambian el plan
 
