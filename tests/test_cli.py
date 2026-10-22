@@ -417,6 +417,35 @@ class TestPanel(Base):
         self.assertEqual(out["others"][0]["mode"], "continue")
         self.assertTrue(out["others"][0]["age"].endswith("ago"))
 
+    def test_a_root_with_its_own_handoff_shows_it_like_the_receipt(self):
+        """Ruling 11: the panel is the receipt, and the receipt shows the root's
+        handoff even when the root also holds projects."""
+        self.init_git()
+        self.write("## State\nroot work\n")
+        self.sub("proyectos/radar")
+        self.sub("proyectos/instrumentos")
+        out = self.panel()
+        self.assertEqual(out["project"], {"name": self.project.name, "path": str(self.project)})
+        self.assertEqual(out["state"], "normal")
+        self.assertEqual(out["handoff"]["sections"][0]["items"], ["• root work"])
+        self.assertEqual([o["name"] for o in out["others"]], ["instrumentos", "radar"])
+
+    def test_others_carry_their_path_and_it_opens_the_right_one(self):
+        """Ruling 12: two folders with the same name are told apart by `rel`."""
+        self.init_git()
+        self.sub("a/radar")
+        self.sub("b/radar")
+        (self.project / "b" / "radar" / ".baton" / "HANDOFF.md").write_text(
+            "---\nbaton: 1\nmode: memory\ndate: 2026-09-03T10:00:00-05:00\n"
+            "branch: main\ncommit: abc1234\n---\n\n## State\nthe b one\n", encoding="utf-8")
+        out = self.panel()
+        self.assertEqual([(o["name"], o["rel"]) for o in out["others"]],
+                         [("radar", "a/radar"), ("radar", "b/radar")])
+        opened = self.panel("--project", "b/radar")
+        self.assertEqual(opened["project"]["path"], str(self.project / "b" / "radar"))
+        self.assertEqual(opened["handoff"]["sections"][0]["items"], ["• the b one"])
+        self.assertEqual([o["rel"] for o in opened["others"]], ["a/radar"])
+
     def test_a_named_project_is_shown_and_the_rest_are_others(self):
         self.init_git()
         self.sub("proyectos/radar")

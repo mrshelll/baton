@@ -466,13 +466,19 @@ PANEL_VERSION = 1
 def _panel_target(args, root: Path, root_cfg, found):
     """The project the panel shows, or None. Never asks: the mod calls this
     every turn, so the question `_resolve` would print becomes `project: null`
-    and the list of projects to open."""
+    and the list of projects to open.
+
+    Where `write` would have to ask, a root with a handoff of its own still
+    shows it: the panel is the receipt, and the SessionStart injects and
+    receipts that handoff whatever the root holds below it."""
     if args.project is not None:
         target, _ = projects.resolve(root, found, args.project)
         return target
     here = Path(args.cwd or os.getcwd())
     root_enabled = storage.Paths(root, document_rel=root_cfg["document"]).document.is_file()
     target, _ = projects.writable_target(root, found, here, root_enabled)
+    if target is None and root_enabled:
+        return projects.Target(root)
     return target
 
 
@@ -538,8 +544,11 @@ def _panel(args) -> dict:
         "project": None, "handoff": None, "threshold": None,
         # Directory names travel inside cloned repos: cleaned and capped like
         # the index's, before the mod puts them on a terminal.
-        "others": [{"name": output.sanitize(card.name)[:output.MAX_NAME], "mode": card.mode,
-                    "age": output.age(card.date, strings)} for card in cards],
+        # `rel` stays raw: it is what `--project` matches first, so it is the one
+        # name that opens the right project when two folders share a name.
+        "others": [{"name": output.sanitize(card.name)[:output.MAX_NAME], "rel": card.rel,
+                    "mode": card.mode, "age": output.age(card.date, strings)}
+                   for card in cards],
         "strings": {k: v for k, v in strings["panel"].items() if not k.startswith("_")},
         "error": None,
     }
