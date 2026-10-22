@@ -6,10 +6,26 @@ import type { PanelData, PanelOther, PanelState, PanelStrings, PaneView, ViewedP
 export const PANEL_VERSION = 1
 /** How long baton.py may take before the load counts as failed. */
 export const TIMEOUT_MS = 10_000
+/**
+ * How long a SessionStart that opens the process waits for the terminal: under
+ * the REPL it comes about 100-250 ms after (task 13), so this only bounds a host
+ * that never says. Well inside the hook's 10 s budget.
+ */
+export const STARTUP_WAIT_MS = 1_500
 
 /** Where the mod keeps what it loaded: the band and the pane draw from here (`read($, panel)`). */
 export const panel = atom({ plugin: 'baton', key: 'panel' } as const, null as PanelData | null)
 export const loadedAt = atom({ plugin: 'baton', key: 'loadedAt' } as const, 0)
+/** Whether this process's `session.start` has come: from then on `$.session.surfaces()` is the truth. */
+export const started = atom({ plugin: 'baton', key: 'started' } as const, false)
+
+export function hasStarted($: EngineInterface): Promise<boolean> {
+  return read($, started)
+}
+
+export async function markStarted($: EngineInterface): Promise<void> {
+  await update($, started, () => true)
+}
 
 /** The panel last loaded, or null before the first load ends: what the band and the pane draw. */
 export function current($: EngineInterface): Promise<PanelData | null> {

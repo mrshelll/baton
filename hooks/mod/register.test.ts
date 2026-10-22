@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderSurface, SessionMessage } from 'claude-code'
+import { STARTUP_WAIT_MS } from './data'
 import { SAMPLE } from './testdata'
 
 const SESSION = 'sesión 1'
@@ -22,7 +23,7 @@ function deferred<T>() {
  */
 function world(
   on: On,
-  surfaces: readonly RenderSurface[] | 'unreadable' = ['terminal'],
+  surfaces: readonly RenderSurface[] | 'unreadable' | (() => readonly RenderSurface[]) = ['terminal'],
   stdout: (run: number) => Promise<string> = async () => SAMPLE,
 ) {
   const runs: { argv: readonly string[] }[] = []
@@ -31,8 +32,8 @@ function world(
   const panels: string[] = []
   let done = 0
   const waiting: { n: number; settle: (v: void) => void }[] = []
-  mock.clock(on, { now: 5_000 })
-  on('session.surfaces', () => (surfaces === 'unreadable' ? { deny: 'no surfaces here' } : { value: surfaces }))
+  const clock = mock.clock(on, { now: 5_000 })
+  on('session.surfaces', () => (surfaces === 'unreadable' ? { deny: 'no surfaces here' } : { value: typeof surfaces === 'function' ? surfaces() : surfaces }))
   on('session.id', () => ({ value: SESSION }))
   on('session.cwd', () => ({ value: CWD }))
   on('process.run', async (_$, e) => {
@@ -56,7 +57,7 @@ function world(
     else waiting.push({ n, settle: d.settle })
     return d.promise
   }
-  return { runs, state, panels, loads }
+  return { runs, state, panels, loads, clock }
 }
 
 /** The classic events the mod marks, each raised as the engine raises it. */
@@ -92,6 +93,8 @@ for (const surfaces of [['terminal'], ['terminal', 'mobile']] as const) {
 for (const surfaces of [['desktop'], ['vscode'], ['mobile'], []] as const) {
   test(`drawn on ${surfaces.join(' + ') || 'nothing (-p)'}, the mark is left off: nothing would replace the receipt`, async ($, on) => {
     world(on, surfaces)
+    // A -p run says so in the environment the engine sets for it (seen on 2.1.308).
+    mock.env(on, { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' })
     const seen = stdinOf(on)
     for (const raise of Object.values(RAISE)) await raise($)
     for (const name of Object.keys(RAISE)) {
@@ -100,6 +103,98 @@ for (const surfaces of [['desktop'], ['vscode'], ['mobile'], []] as const) {
     }
   })
 }
+
+// -- the startup: SessionStart comes before the terminal ----------------------
+//
+// Seen on Claude Code 2.1.308 in a real terminal (task-13-report.md): at
+// startup `classic.SessionStart` comes first, with `surfaces()` still empty,
+// and `session.start` (surface `terminal`) about 100-250 ms later, while the
+// SessionStart hook still runs. Under `-p`, `session.start` (surface null)
+// comes only once SessionStart has answered, and the engine sets
+// CLAUDE_CODE_ENTRYPOINT=sdk-cli (`cli` under the REPL).
+
+/** What a startup in a terminal looks like: no surface until session.start. */
+function startingTerminal(on: On) {
+  let up = false
+  const w = world(on, () => (up ? ['terminal'] : []))
+  const seen = stdinOf(on)
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  const start = async ($: Engine) => {
+    up = true
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  }
+  return { w, seen, start }
+}
+
+/** Settles once `promise` has, or after the event loop settled without the clock moving; true when it had. */
+async function settledBy<T>(promise: Promise<T>, clock: { settle: () => Promise<void> }): Promise<boolean> {
+  let done = false
+  void promise.then(() => { done = true })
+  await clock.settle()
+  return done
+}
+
+for (const source of ['startup', 'resume'] as const) {
+  test(`a ${source} that opens the process: SessionStart before the terminal waits for it, and is marked`, async ($, on) => {
+    mock.env(on, { CLAUDE_CODE_ENTRYPOINT: 'cli' })
+    const { w, seen, start } = startingTerminal(on)
+    const answered = $.classic.SessionStart({ source })
+    expect(await settledBy(answered, w.clock)).toBe(false)
+    await w.clock.advance(150)
+    await start($)
+    await w.clock.advance(100)
+    await answered
+    expect(seen.SessionStart?.baton_mod).toBe(true)
+    expect(seen.SessionStart?.source).toBe(source)
+  })
+}
+
+test('SessionStart after session.start, with the terminal already up: marked at once, no wait', async ($, on) => {
+  const { w, seen, start } = startingTerminal(on)
+  await start($)
+  expect(await settledBy($.classic.SessionStart({ source: 'startup' }), w.clock)).toBe(true)
+  expect(seen.SessionStart?.baton_mod).toBe(true)
+})
+
+test('a -p run: SessionStart is not held and gets no mark; session.start then says null', async ($, on) => {
+  mock.env(on, { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' })
+  const w = world(on, [])
+  const seen = stdinOf(on)
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  expect(await settledBy($.classic.SessionStart({ source: 'startup' }), w.clock)).toBe(true)
+  expect(seen.SessionStart?.hook_event_name).toBe('SessionStart')
+  expect('baton_mod' in (seen.SessionStart ?? {})).toBe(false)
+  await $.session.start({ cwd: CWD, surface: null, isInteractive: false })
+})
+
+test('the SDK (sdk-ts) is headless too: no wait, no mark', async ($, on) => {
+  mock.env(on, { CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' })
+  const w = world(on, [])
+  const seen = stdinOf(on)
+  expect(await settledBy($.classic.SessionStart({ source: 'startup' }), w.clock)).toBe(true)
+  expect('baton_mod' in (seen.SessionStart ?? {})).toBe(false)
+})
+
+test('a host that never says: the wait is bounded, then no mark (the receipt stays)', async ($, on) => {
+  const w = world(on, [])
+  const seen = stdinOf(on)
+  const answered = $.classic.SessionStart({ source: 'startup' })
+  await w.clock.advance(STARTUP_WAIT_MS - 100)
+  expect(await settledBy(answered, w.clock)).toBe(false)
+  await w.clock.advance(100)
+  await answered
+  expect('baton_mod' in (seen.SessionStart ?? {})).toBe(false)
+  expect(STARTUP_WAIT_MS).toBeLessThanOrEqual(2_000)
+})
+
+test('once session.start has come and no terminal draws, a later SessionStart does not wait', async ($, on) => {
+  const w = world(on, [])
+  const seen = stdinOf(on)
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: CWD, surface: null, isInteractive: false })
+  expect(await settledBy($.classic.SessionStart({ source: 'compact' }), w.clock)).toBe(true)
+  expect('baton_mod' in (seen.SessionStart ?? {})).toBe(false)
+})
 
 test('a session whose surfaces cannot be read gets no mark, and the event still goes through', async ($, on) => {
   world(on, 'unreadable')

@@ -443,7 +443,9 @@ the receipt, the `Stop` that asks at a threshold, and the command. Writing the
 handoff at compaction uses plain hooks, so it works on every surface.
 
 The hooks know the mod is there because it marks their input when the session has
-a terminal. When the mark does not arrive, they behave as if there were no mod: a
+a terminal. At startup Claude Code announces the session before the terminal is
+up, so the mod waits for it, 1.5 s at most (it usually takes 0.2 s); a `-p` or SDK
+run never waits. When the mark does not arrive, they behave as if there were no mod: a
 receipt too many beats none. `"display": "panel"` in the config tells them the
 same from your side; use it only with the mod, because without it you lose the
 receipt and the threshold ask.

@@ -1,7 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 import type { PanelStrings } from '../../types'
 import { band, bandLine, pending, stack, type BandActions } from './band'
-import { current, currentView, currentViewed, openMore, refresh, showOwn, showProject } from './data'
+import { current, currentView, currentViewed, hasStarted, markStarted, openMore, refresh, showOwn, showProject, STARTUP_WAIT_MS } from './data'
 import { pane, type PaneActions } from './pane'
 
 /** The pane's id: the band's click, the auto-open and the render hook name it alike. */
@@ -22,13 +22,50 @@ async function isDrawn($: EngineInterface): Promise<boolean> {
   }
 }
 
+/** How often the startup's wait looks at the surfaces again. */
+const STARTUP_POLL_MS = 50
+
+/** True where the engine says no one is at a terminal: `-p` (`sdk-cli`) and the SDK (`sdk-*`). */
+async function isHeadless($: EngineInterface): Promise<boolean> {
+  try {
+    return (await $.env.get('CLAUDE_CODE_ENTRYPOINT'))?.startsWith('sdk') === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * `isDrawn` for a SessionStart, which may open the process. There it comes
+ * before `session.start` and before the terminal is among the surfaces (seen
+ * on 2.1.308: the terminal follows in 100-250 ms; task-13-report.md), so with
+ * no surface yet, no `session.start` and no sign of a headless run, it waits
+ * for one, at most STARTUP_WAIT_MS. A `-p` run is never held: there
+ * `session.start` comes only after SessionStart answers, and it draws nowhere.
+ */
+async function isDrawnAtStart($: EngineInterface, signal?: AbortSignal): Promise<boolean> {
+  try {
+    const first = await $.session.surfaces()
+    if (first.includes('terminal')) return true
+    if (first.length > 0 || (await hasStarted($)) || (await isHeadless($))) return false
+    for (let waited = 0; waited < STARTUP_WAIT_MS; waited += STARTUP_POLL_MS) {
+      await $.clock.sleep(STARTUP_POLL_MS, { signal })
+      const now = await $.session.surfaces()
+      if (now.includes('terminal')) return true
+      if (now.length > 0 || (await hasStarted($))) return false
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
 /**
  * The event as baton's Python hooks should receive it on stdin: marked
  * `baton_mod: true` where the mod draws (spike S3: the field reaches them),
  * unchanged elsewhere. `_mod_active` in hooks/baton_hook.py reads the mark.
  */
-async function marked<E extends object>($: EngineInterface, e: E): Promise<E> {
-  return (await isDrawn($)) ? { ...e, baton_mod: true } : e
+async function marked<E extends object>($: EngineInterface, e: E, drawn: Promise<boolean> = isDrawn($)): Promise<E> {
+  return (await drawn) ? { ...e, baton_mod: true } : e
 }
 
 /**
@@ -149,7 +186,9 @@ export const register: Register = on => {
     }
   })
 
+  // From here `surfaces()` is the truth: a SessionStart waiting for the terminal stops waiting.
   on('session.start', async ($, e, next) => {
+    await markStarted($).catch(() => undefined)
     const started = await next(e)
     void refresh($)
     return started
@@ -175,8 +214,9 @@ export const register: Register = on => {
   // SessionStart reloads too: after a /clear or a resume the session id
   // changed and no session.start follows. After a startup or a /clear, the
   // pane opens on its own when blockers are left; the event never waits on it.
+  // It waits only for the terminal, when it opens the process (isDrawnAtStart).
   on('classic.SessionStart', async ($, e, next) => {
-    const answered = await next(await marked($, e))
+    const answered = await next(await marked($, e, isDrawnAtStart($, next.signal)))
     void openOnItsOwn($, e.source).catch(() => undefined)
     return answered
   }).catch(($, e, next) => next(e))

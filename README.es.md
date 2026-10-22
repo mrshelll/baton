@@ -445,7 +445,9 @@ traspaso al compactar usa hooks normales, así que funciona en todas las
 superficies.
 
 Los hooks saben que el mod está porque marca su entrada cuando la sesión tiene
-terminal. Si la marca no llega, se comportan como si no hubiera mod: mejor un
+terminal. Al arrancar, Claude Code avisa del inicio de sesión antes de montar la
+terminal, así que el mod la espera, como mucho 1,5 s (suele tardar 0,2 s); una
+ejecución con `-p` o el SDK no espera. Si la marca no llega, se comportan como si no hubiera mod: mejor un
 recibo de más que ninguno. `"display": "panel"` en la config les dice lo mismo
 desde tu lado; úsalo solo con el mod, porque sin él pierdes el recibo y la
 pregunta del umbral.
