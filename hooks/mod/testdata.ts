@@ -82,7 +82,7 @@ export const SAMPLE = String.raw`
     "band_threshold": "baton \u00b7 \u26a0 context at {percent} %",
     "band_none": "baton \u00b7 no handoff in this project",
     "band_error": "baton \u00b7 \u26a0 could not read the handoff",
-    "band_pending": "baton \u00b7 \u26a0 {n} open \u00b7 {age}",
+    "band_pending": "baton \u00b7 \u26a0 {n} open items \u00b7 {age}",
     "band_no_project": "baton \u00b7 no project loaded",
     "hint_open": "click \u2192 panel",
     "action_new_session": "New session",

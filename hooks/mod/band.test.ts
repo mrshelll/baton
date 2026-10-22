@@ -80,7 +80,7 @@ test('bandLine: one item left reads in the singular, two or more in the plural, 
   expect(bandLine(blockers(ES, 2), WIDE).text).toBe('baton · ⚠ 2 pendientes · recién')
   expect(bandLine(blockers(ES, 3), WIDE).text).toBe('baton · ⚠ 3 pendientes · recién')
   expect(bandLine(blockers(EN, 1), WIDE)).toMatchObject({ text: 'baton · ⚠ 1 open item · just now', tone: 'warning', hint: 'click → panel' })
-  expect(bandLine(blockers(EN, 2), WIDE).text).toBe('baton · ⚠ 2 open · just now')
+  expect(bandLine(blockers(EN, 2), WIDE).text).toBe('baton · ⚠ 2 open items · just now')
 })
 
 test('bandLine: the mode in the project language, continue as well as memory', () => {
