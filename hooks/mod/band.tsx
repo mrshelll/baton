@@ -39,17 +39,17 @@ export type BandActions = {
 type Face = { text: string; tone: BandModel['tone']; action: BandAction | null; hint: boolean }
 
 /** Cells a text takes, counted by code point: every glyph the strings use is one cell. */
-function width(text: string): number {
+export function width(text: string): number {
   return Array.from(text).length
 }
 
 /** One row: line breaks and runs of spaces become one space. */
-function oneLine(text: string): string {
+export function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
 /** At most `max` cells, ending in `…` when cut. */
-function cut(text: string, max: number): string {
+export function cut(text: string, max: number): string {
   const chars = Array.from(text)
   if (chars.length <= max) return text
   if (max <= 0) return ''
@@ -57,12 +57,12 @@ function cut(text: string, max: number): string {
 }
 
 /** The template with its `{fields}` filled; one with no value stays as written. */
-function fill(template: string, values: Record<string, string | number>): string {
+export function fill(template: string, values: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (whole, name: string) => (name in values ? String(values[name]) : whole))
 }
 
 /** The items left in the handoff's urgent sections (the blockers): what the band counts as open. */
-function pending(data: PanelData): number {
+export function pending(data: PanelData): number {
   return (data.handoff?.sections ?? []).filter(s => s.urgent).reduce((n, s) => n + s.items.length, 0)
 }
 

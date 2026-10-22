@@ -59,6 +59,19 @@ test('loadPanel runs baton.py panel for the session and the folder, by argv, wit
   }])
 })
 
+test('loadPanel for another project adds --project with its rel, raw, as the last two argv', async () => {
+  const { $, calls } = fake(exited(0, SAMPLE))
+  await loadPanel($, 'session 1', '/Users/someone/Mis proyectos/proyecto uno', 'sub/el radar')
+  expect(calls).toEqual([{
+    argv: [
+      'python3', `${ROOT}/scripts/baton.py`, 'panel', '--json',
+      '--session', 'session 1', '--cwd', '/Users/someone/Mis proyectos/proyecto uno',
+      '--project', 'sub/el radar',
+    ],
+    init: { timeoutMs: 10_000 },
+  }])
+})
+
 test('loadPanel hands back the JSON of baton.py panel as it came', async () => {
   const { $, logs } = fake(exited(0, SAMPLE))
   const data = await loadPanel($, 's1', '/x')

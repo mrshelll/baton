@@ -113,6 +113,24 @@ export type PanelData = {
   error: string | null
 }
 
+/** The sections the pane keeps folded until pressed. */
+export type FoldedSlug = 'decisions' | 'traps'
+
+/** What the pane shows and how far it is opened: the mod's own, never baton.py's. */
+export type PaneView = {
+  /** The `rel` of the other project in view; null for the session's own. */
+  project: string | null
+  open: {
+    decisions: boolean
+    traps: boolean
+    /** The sections whose «see more» was pressed, by slug. */
+    more: string[]
+  }
+}
+
+/** Another project's panel, as loaded for the pane: its handle, its name and its data. */
+export type ViewedProject = { rel: string; name: string; data: PanelData }
+
 declare module 'claude-code' {
   interface PluginState {
     baton: {
@@ -120,6 +138,10 @@ declare module 'claude-code' {
       panel: PanelData | null
       /** When that load ended, in ms since the epoch (`$.clock.now()`). */
       loadedAt: number
+      /** What the pane shows; the band always shows `panel`. */
+      view: PaneView
+      /** The other project the pane last loaded; drawn while `view.project` is its rel. */
+      viewed: ViewedProject | null
     }
   }
 }

@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
-import type { PanelData, PanelState, PanelStrings } from '../../types'
+import type { PanelData, PanelOther, PanelState, PanelStrings, PaneView, ViewedProject } from '../../types'
 
 /** The version of `baton.py panel --json` this mod reads. */
 export const PANEL_VERSION = 1
@@ -14,6 +14,26 @@ export const loadedAt = atom({ plugin: 'baton', key: 'loadedAt' } as const, 0)
 /** The panel last loaded, or null before the first load ends: what the band and the pane draw. */
 export function current($: EngineInterface): Promise<PanelData | null> {
   return read($, panel)
+}
+
+/** The pane on the session's own project, every section folded and short. */
+export const OWN_VIEW: PaneView = { project: null, open: { decisions: false, traps: false, more: [] } }
+
+/** What the pane shows, and the other project it last loaded. */
+export const view = atom({ plugin: 'baton', key: 'view' } as const, OWN_VIEW)
+export const viewed = atom({ plugin: 'baton', key: 'viewed' } as const, null as ViewedProject | null)
+
+export function currentView($: EngineInterface): Promise<PaneView> {
+  return read($, view)
+}
+
+export function currentViewed($: EngineInterface): Promise<ViewedProject | null> {
+  return read($, viewed)
+}
+
+/** Changes how far the pane is opened (a fold, a «see more»); what it shows stays. */
+export async function openMore($: EngineInterface, change: (open: PaneView['open']) => PaneView['open']): Promise<void> {
+  await update($, view, v => ({ ...v, open: change(v.open) }))
 }
 
 const STATES: readonly PanelState[] = ['ready', 'threshold', 'error', 'normal', 'none']
@@ -128,11 +148,15 @@ function why($: EngineInterface, text: string): void {
  *
  * Only the top level is checked; what lies inside `handoff` and each of
  * `others` is baton.py's, shipped in the same plugin.
+ *
+ * `project`, another project's `rel` (`others[]`), goes to baton.py as
+ * `--project <rel>`, by argv: the panel of that project instead.
  */
-export async function loadPanel($: EngineInterface, sessionId: string, cwd: string): Promise<PanelData> {
+export async function loadPanel($: EngineInterface, sessionId: string, cwd: string, project?: string): Promise<PanelData> {
   try {
     const argv = [
       'python3', `${$.plugin.root}/scripts/baton.py`, 'panel', '--json', '--session', sessionId, '--cwd', cwd,
+      ...(project === undefined ? [] : ['--project', project]),
     ]
     const { exitCode, stdout, stderr } = await $.process.run(argv, { timeoutMs: TIMEOUT_MS })
     if (exitCode !== 0) {
@@ -187,4 +211,43 @@ export async function refresh($: EngineInterface): Promise<void> {
   } catch (error) {
     why($, `state not written: ${error instanceof Error ? error.message : String(error)}`)
   }
+}
+
+/**
+ * The number of the last change of what the pane shows. A project that ends
+ * loading after the pane moved on (another project, Volver) writes nothing.
+ */
+let shown = 0
+
+/**
+ * Shows `other` in the pane: loads its panel with `--project <rel>`, then
+ * puts it in view, every section folded. The band keeps to the session's own.
+ * Never throws: on any failure the pane keeps what it showed.
+ */
+export async function showProject($: EngineInterface, other: PanelOther): Promise<void> {
+  const ticket = ++shown
+  try {
+    const [sessionId, cwd] = await Promise.all([$.session.id(), $.session.cwd()])
+    const data = await loadPanel($, sessionId, cwd, other.rel)
+    if (ticket !== shown) return
+    await update($, viewed, () => ({ rel: other.rel, name: other.name, data }))
+    await update($, view, () => ({ ...OWN_VIEW, project: other.rel }))
+  } catch (error) {
+    why($, `project not shown: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/**
+ * Back to the session's own project, every section folded; a project still
+ * loading will not take the pane over. With `reload`, the own panel is loaded
+ * again (Volver). Never throws.
+ */
+export async function showOwn($: EngineInterface, reload: boolean): Promise<void> {
+  ++shown
+  try {
+    await update($, view, () => OWN_VIEW)
+  } catch (error) {
+    why($, `view not reset: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (reload) await refresh($)
 }
