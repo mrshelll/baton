@@ -79,6 +79,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isRecordOrNull(value: unknown): boolean {
+  return value === null || isRecord(value)
+}
+
+/**
+ * What in a version 1 panel the views would trip on, or null when nothing:
+ * they map `others`, branch on `project`, `handoff` and `threshold`, draw
+ * `error` and fill `strings`. Better the error state now than a crash while drawing.
+ */
+function shapeError(parsed: Record<string, unknown>): string | null {
+  if (!Array.isArray(parsed.others) || !parsed.others.every(isRecord)) return 'others'
+  for (const key of ['project', 'handoff', 'threshold'] as const) {
+    if (!isRecordOrNull(parsed[key])) return key
+  }
+  if (parsed.error !== null && typeof parsed.error !== 'string') return 'error'
+  if (!isRecord(parsed.strings)) return 'strings'
+  return null
+}
+
+/** The entries of `strings` that are strings: any other value leaves the fallback's in place. */
+function onlyStrings(strings: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(Object.entries(strings).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+}
+
 /** Why the load failed, in the debug log alone: a transcript row every turn would be noise (spike S1). */
 function why($: EngineInterface, text: string): void {
   try {
@@ -91,11 +115,12 @@ function why($: EngineInterface, text: string): void {
 /**
  * Runs `baton.py panel --json` for the session and the folder and hands back
  * its JSON. Anything else (an exit code other than 0, a stdout that is not
- * that JSON, a version other than 1, a run that rejects or overruns) is the
- * `error` state of the English fallback. Never throws.
+ * that JSON, a version other than 1, a top-level shape the views would trip
+ * on, a run that rejects or overruns) is the `error` state of the English
+ * fallback. Never throws.
  *
- * Only the shape the views branch on is checked (`version`, `state`); the rest
- * is baton.py's, shipped in the same plugin.
+ * Only the top level is checked; what lies inside `handoff` and each of
+ * `others` is baton.py's, shipped in the same plugin.
  */
 export async function loadPanel($: EngineInterface, sessionId: string, cwd: string): Promise<PanelData> {
   try {
@@ -118,8 +143,12 @@ export async function loadPanel($: EngineInterface, sessionId: string, cwd: stri
       why($, `not a version ${PANEL_VERSION} panel: ${stdout.slice(0, 200)}`)
       return loadFailed()
     }
-    const strings = isRecord(parsed.strings) ? parsed.strings : {}
-    return { ...parsed, strings: { ...FALLBACK_STRINGS, ...strings } } as PanelData
+    const wrong = shapeError(parsed)
+    if (wrong !== null) {
+      why($, `a version ${PANEL_VERSION} panel of the wrong shape (${wrong}): ${stdout.slice(0, 200)}`)
+      return loadFailed()
+    }
+    return { ...parsed, strings: { ...FALLBACK_STRINGS, ...onlyStrings(parsed.strings as Record<string, unknown>) } } as PanelData
   } catch (error) {
     why($, error instanceof Error ? error.message : String(error))
     return loadFailed()

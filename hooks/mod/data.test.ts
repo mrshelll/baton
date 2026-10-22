@@ -107,6 +107,45 @@ test('loadPanel: a version other than 1 or an unknown state is the load-failed s
   }
 })
 
+test('loadPanel: a JSON of the right version but the wrong shape is the load-failed state, not a crash later', async () => {
+  const parsed = JSON.parse(SAMPLE) as Record<string, unknown>
+  const shapes: Record<string, unknown>[] = [
+    { version: 1, state: 'none' },
+    { ...parsed, others: null },
+    { ...parsed, others: undefined },
+    { ...parsed, others: [1] },
+    { ...parsed, others: [null] },
+    { ...parsed, others: 'radar' },
+    { ...parsed, project: 'proyecto uno' },
+    { ...parsed, project: undefined },
+    { ...parsed, handoff: [] },
+    { ...parsed, handoff: 3 },
+    { ...parsed, threshold: 'high' },
+    { ...parsed, error: 5 },
+    { ...parsed, error: undefined },
+    { ...parsed, strings: null },
+    { ...parsed, strings: [] },
+    { ...parsed, strings: undefined },
+  ]
+  for (const shape of shapes) {
+    const { $, logs } = fake(exited(0, JSON.stringify(shape)))
+    expectLoadFailed(await loadPanel($, 's1', '/x'))
+    expect(logs[0]?.to).toBe('debug')
+  }
+})
+
+test('loadPanel keeps a string only where the JSON has a string: the fallback survives the rest', async () => {
+  const parsed = JSON.parse(SAMPLE) as Record<string, unknown>
+  const strings = { ...(parsed.strings as object), title: null, back: 3, see_more: ['x'], band_none: 'mine' }
+  const { $ } = fake(exited(0, JSON.stringify({ ...parsed, strings })))
+  const data = await loadPanel($, 's1', '/x')
+  expect(data.state).toBe('normal')
+  expect(data.strings.title).toBe(FALLBACK_STRINGS.title)
+  expect(data.strings.back).toBe(FALLBACK_STRINGS.back)
+  expect(data.strings.see_more).toBe(FALLBACK_STRINGS.see_more)
+  expect(data.strings.band_none).toBe('mine')
+})
+
 test('loadPanel: a rejected run (the 10 s limit, python3 missing) is the load-failed state', async () => {
   const { $, logs } = fake(async () => { throw new Error('timed out after 10000 ms') })
   expectLoadFailed(await loadPanel($, 's1', '/x'))
