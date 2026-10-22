@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-577-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-589-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -244,6 +244,12 @@ the old handoff injected on top of the summary that carries the new one.
 or the root of a plain repo. At a root with several projects and none loaded,
 baton prints nothing, and the compaction goes the way below if the root has a
 handoff of its own; otherwise baton stays out of it, as before.
+
+**When it wrote the active project's handoff, the `/clear` that follows carries
+on with that project**: the new session gets its handoff, as `load` would give
+it, instead of the index. Only that one `/clear`, within 12 hours, and only if
+the project is still the active one; any other fresh start forgets the active
+project, as always.
 
 **If the block does not come out, baton asks right after.** The summarizer left
 it out, it was cut, it did not fit the budget, a `/baton` was mid-draft, or there
@@ -840,7 +846,7 @@ The band and the panel need a Claude Code that loads mods (built against
 ./tests/run.sh
 ```
 
-577 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+589 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case

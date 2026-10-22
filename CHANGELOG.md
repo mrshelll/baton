@@ -23,7 +23,10 @@ gives baton a band and a panel so it can be used with clicks.
   session.`, and the `/clear` stays yours. It only happens where `/baton` would
   write without asking; anywhere else, or when the block does not come out, the
   compaction goes the old way: the summary is kept and the next turn asks for the
-  handoff.
+  handoff. When it wrote the active project's handoff, the `/clear` that follows
+  carries on with that project — its handoff, not the index — once, within 12
+  hours, and only while it is still the active one; any other fresh start forgets
+  the active project as before.
 - **The band**: one line always visible above the prompt, from a mod that ships
   inside the plugin. It says how the handoff stands — saved, ready after a
   compaction, open blockers, context past a threshold, none yet — and carries the

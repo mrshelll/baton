@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-577-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-589-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -246,6 +246,12 @@ recibe el traspaso viejo encima del resumen que trae el nuevo.
 sesión, o la raíz de un repo normal. En una raíz con varios proyectos y ninguno
 cargado, baton no imprime nada, y la compactación sigue el camino de abajo si la
 raíz tiene traspaso propio; si no, baton no interviene, como antes.
+
+**Si escribió el traspaso del proyecto activo, el `/clear` que sigue continúa
+ese proyecto**: la sesión nueva recibe su traspaso, como lo daría `load`, en vez
+del índice. Solo ese `/clear`, dentro de 12 horas, y solo si el proyecto sigue
+siendo el activo; cualquier otro inicio desde cero olvida el proyecto activo,
+como siempre.
 
 **Si el bloque no sale, baton pregunta justo después.** El resumidor no lo
 escribió, salió cortado, no cupo en el presupuesto, había un `/baton` a medio
@@ -849,7 +855,7 @@ La franja y el panel necesitan un Claude Code que cargue mods (hecho sobre
 ./tests/run.sh
 ```
 
-577 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+589 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.

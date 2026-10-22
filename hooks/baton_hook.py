@@ -106,11 +106,23 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
     if source == "compact" and _block_replaces(entry, paths, root, found):
         return {}, "silent: handoff travels in the compaction summary"
 
-    strings = output.load_strings(cfg["language"])
     # With the mod, the panel shows what the receipt showed; the handoff still
     # goes to the model.
     receipt = cfg["receipt"] and not _mod_active(entry, cfg)
 
+    # On /clear an active project survives only when a compaction asked for it
+    # (see `main`), so one here is that one: it is delivered the way `baton.py
+    # load` delivers it, and without the index, which says none was loaded.
+    kept = projects.read_active(root, found) if source == "clear" else None
+    if kept is not None:
+        kcfg = config.load(kept.path, parent=root)
+        kpaths = storage.Paths(kept.path, document_rel=kcfg["document"])
+        if kpaths.document.is_file():
+            payload, mode = _deliver(kpaths, kept.rel, output.load_strings(kcfg["language"]),
+                                     source, receipt, cfg["receipt_lines"])
+            return payload, f"injected {mode} mode for {kept.name}, kept after the compaction"
+
+    strings = output.load_strings(cfg["language"])
     index = ""
     cards = []
     if found.projects:
@@ -126,6 +138,15 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
                 strings=strings, cards=cards, max_lines=cfg["receipt_lines"])
         return payload, f"index injected: {len(found.projects)} projects"
 
+    payload, mode = _deliver(paths, str(paths.document.relative_to(paths.root)), strings,
+                             source, receipt, cfg["receipt_lines"], index, cards)
+    return payload, f"injected {mode} mode"
+
+
+def _deliver(paths: storage.Paths, source_label: str, strings: dict, source: str,
+             receipt: bool, receipt_lines: int, index: str = "", cards=()):
+    """`(payload, mode)`: the handoff at `paths` wrapped for the model, with its
+    receipt when `receipt`."""
     text = paths.document.read_text(encoding="utf-8", errors="replace")
     mode = document.read_mode(text)
     fields = document.read_fields(text)
@@ -142,8 +163,7 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
 
     context = output.wrap(
         body=document.extract_body(text, strings["context_section"]) or text,
-        mode=mode, written=fields.get("date", "?"),
-        source=str(paths.document.relative_to(paths.root)),
+        mode=mode, written=fields.get("date", "?"), source=source_label,
         freshness_notice=notice, repeat=repeat, strings=strings, index=index,
     )
 
@@ -158,9 +178,9 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
         # what they left without spending a turn asking for it back.
         payload["systemMessage"] = output.receipt(
             document_text=text, mode=mode, strings=strings, cards=cards,
-            stale=bool(notice), max_lines=cfg["receipt_lines"],
+            stale=bool(notice), max_lines=receipt_lines,
             lines=len(context.splitlines()))
-    return payload, f"injected {mode} mode"
+    return payload, mode
 
 
 def _hook_target(root, paths: storage.Paths, cfg, found):
@@ -332,6 +352,10 @@ def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found):
         storage.save_window(paths, dict(state, fired=[], announced={}, warned=False))
 
     if written:
+        if dest.why == "active":
+            # Its «New session» means "carry on with this project": the /clear
+            # that follows keeps it active instead of starting from the index.
+            projects.mark_keep_active(root, dest.target.project, session)
         if _mod_active(entry, cfg):
             return "", f"summary saved, {what}"
         ready = dest.strings["auto_handoff"]["ready"]
@@ -560,8 +584,14 @@ def main() -> int:
 
         # Before the inject_on filter, not after: a root whose config drops
         # `startup` must still not carry yesterday's active project into today.
-        if event == "session-start" and (entry.get("source") or "startup") in ("startup", "clear"):
-            projects.clear_active(root)
+        # The one exception is the /clear a compaction offered after writing the
+        # active project's handoff: it continues that project. Its mark is used
+        # up by any fresh start, and only honoured when that /clear injects.
+        source = entry.get("source") or "startup"
+        if event == "session-start" and source in ("startup", "clear"):
+            kept = projects.take_keep_active(root, found)
+            if not (kept is not None and source == "clear" and source in cfg["inject_on"]):
+                projects.clear_active(root)
 
         if not paths.document.is_file() and not found.projects:
             # The majority case in the world: every project where /baton was

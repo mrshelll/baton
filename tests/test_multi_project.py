@@ -2,7 +2,9 @@
 handoff ends up."""
 import json
 import os
+import shutil
 import sys
+from datetime import datetime, timedelta, timezone
 
 from tests.helpers import REPO_ROOT, BaseCase
 
@@ -527,6 +529,176 @@ class TestWritableTarget(Base):
         here.mkdir()
         self.assertEqual(self.target(here),
                          (projects.Target(self.project, found.projects[0]), "active"))
+
+
+class TestClearAfterCompaction(Base):
+    """A compaction that wrote the ACTIVE sub-project's handoff offers «New
+    session»: that /clear continues the project, once. Every other /clear
+    forgets it, as before."""
+
+    BODY = ("## Blockers\n1. the staging key is missing\n2. A or B?\n\n"
+            "## Next step\nfinish pay.ts:40\n\n## State\nmigration halfway\n")
+
+    def setUp(self):
+        super().setUp()
+        self.init_git()
+        self.sub("alfa")
+        self.sub("beta")
+
+    def hook(self, event, name, session="s1", **extra):
+        return self.run_hook_text(event, self.payload(name, session_id=session, **extra))
+
+    def load(self, name="alfa"):
+        p = self.cli("load", name)
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def compaction(self, session="s1", block=True, **extra):
+        self.hook("pre-compact", "PreCompact", session=session, trigger="auto", **extra)
+        tag = output.COMPACTION_TAG
+        summary = "summary\n" + (f'<{tag} mode="memory">\n{self.BODY}</{tag}>\n' if block else "")
+        self.hook("post-compact", "PostCompact", session=session, trigger="auto",
+                  compact_summary=summary, **extra)
+
+    def clear(self, session="s2", **extra):
+        rc, out, err = self.hook("session-start", "SessionStart", session=session,
+                                 source="clear", **extra)
+        self.assertEqual(rc, 0, err)
+        return json.loads(out) if out.strip() else None
+
+    def panel(self, session="s2"):
+        p = self.cli("panel", "--json", "--session", session)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return json.loads(p.stdout)
+
+    def mark(self):
+        return projects.keep_path(self.project)
+
+    def active(self):
+        return projects.read_active(self.project, projects.discover(self.project))
+
+    # -- the chain ---------------------------------------------------------------
+    def test_load_compact_clear_continues_the_project_with_its_handoff(self):
+        self.hook("session-start", "SessionStart", source="startup", baton_mod=True)
+        self.load()
+        self.compaction(baton_mod=True)
+        self.assertTrue(self.mark().is_file())
+
+        out = self.clear(baton_mod=True)
+        text = self.context(out)
+        self.assertIn("finish pay.ts:40", text, "alfa's handoff, the one the compaction wrote")
+        self.assertIn('source="alfa"', text)
+        self.assertNotIn("<baton-index", text,
+                         "the index says no project was loaded: not with one that is")
+        self.assertNotIn("systemMessage", out, "the mod shows it instead")
+        self.assertEqual(self.active().rel, "alfa")
+
+        panel = self.panel()
+        self.assertEqual(panel["project"]["name"], "alfa")
+        self.assertEqual(panel["state"], "normal")
+        blockers = panel["handoff"]["sections"][0]
+        self.assertEqual((blockers["slug"], blockers["items"]),
+                         ("blockers", ["1. the staging key is missing", "2. A or B?"]))
+        self.assertEqual([o["name"] for o in panel["others"]], ["beta"])
+
+    def test_without_the_mod_the_receipt_shows_the_project_kept(self):
+        self.load()
+        self.compaction()
+        out = self.clear()
+        self.assertIn("finish pay.ts:40", self.context(out))
+        self.assertIn("the staging key is missing", out["systemMessage"])
+
+    def test_the_mark_is_consumed_once(self):
+        self.load()
+        self.compaction()
+        self.clear()
+        self.assertFalse(self.mark().exists())
+        out = self.clear(session="s3")
+        self.assertIsNone(self.active())
+        self.assertIn("<baton-index", self.context(out))
+        self.assertIsNone(self.panel(session="s3")["project"])
+
+    # -- every other /clear ------------------------------------------------------
+    def test_an_ordinary_clear_still_clears(self):
+        self.load()
+        out = self.clear()
+        self.assertIsNone(self.active())
+        self.assertIn("<baton-index", self.context(out))
+        self.assertNotIn("finish pay.ts:40", self.context(out))
+
+    def test_an_expired_mark_is_ignored_and_removed(self):
+        self.load()
+        self.compaction()
+        data = json.loads(self.mark().read_text(encoding="utf-8"))
+        data["at"] = (datetime.now(timezone.utc) - timedelta(hours=13)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        self.mark().write_text(json.dumps(data), encoding="utf-8")
+        self.clear()
+        self.assertIsNone(self.active())
+        self.assertFalse(self.mark().exists())
+
+    def test_a_mark_from_the_future_or_garbage_is_ignored(self):
+        later = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for garbage in ("{broken", "[1]", json.dumps({"project": "alfa"}),
+                        json.dumps({"project": "alfa", "at": later}),
+                        json.dumps({"project": 5, "at": storage.now_utc()})):
+            with self.subTest(garbage=garbage):
+                self.load()
+                self.mark().parent.mkdir(parents=True, exist_ok=True)
+                self.mark().write_text(garbage, encoding="utf-8")
+                self.clear()
+                self.assertIsNone(self.active())
+                self.assertFalse(self.mark().exists())
+
+    def test_a_mark_for_a_project_no_longer_active_is_ignored(self):
+        self.load()
+        self.compaction()
+        self.load("beta")
+        self.clear()
+        self.assertIsNone(self.active())
+
+    def test_a_new_session_discards_the_mark(self):
+        self.load()
+        self.compaction()
+        self.hook("session-start", "SessionStart", session="s9", source="startup")
+        self.assertFalse(self.mark().exists())
+        self.load()
+        self.clear()
+        self.assertIsNone(self.active())
+
+    def test_a_resume_keeps_the_mark_for_the_clear_that_follows(self):
+        self.load()
+        self.compaction()
+        self.hook("session-start", "SessionStart", source="resume")
+        self.assertTrue(self.mark().exists())
+        self.clear()
+        self.assertEqual(self.active().rel, "alfa")
+
+    def test_with_clear_out_of_inject_on_it_clears_as_before(self):
+        # Keeping a project the new session was never told about would send the
+        # next unattended handoff where nobody is looking.
+        (self.project / ".claude").mkdir(exist_ok=True)
+        (self.project / ".claude" / "baton.json").write_text(
+            json.dumps({"inject_on": ["startup", "resume", "compact"]}), encoding="utf-8")
+        self.load()
+        self.compaction()
+        self.clear()
+        self.assertIsNone(self.active())
+        self.assertFalse(self.mark().exists())
+
+    # -- who leaves a mark ---------------------------------------------------------
+    def test_a_compaction_that_did_not_write_leaves_no_mark(self):
+        self.load()
+        self.compaction(block=False)
+        self.assertFalse(self.mark().exists())
+        self.clear()
+        self.assertIsNone(self.active())
+
+    def test_a_compaction_at_a_plain_root_leaves_no_mark(self):
+        for rel in ("alfa", "beta"):
+            shutil.rmtree(self.project / rel)
+        self.handoff(self.project)
+        self.compaction()
+        self.assertFalse(self.mark().exists())
 
 
 if __name__ == "__main__":

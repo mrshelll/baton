@@ -374,3 +374,54 @@ def clear_active(root) -> None:
         active_path(root).unlink(missing_ok=True)
     except OSError:
         pass
+
+
+# --- carrying the active project across one /clear ------------------------
+#
+# After a compaction writes the active project's handoff, baton offers «New
+# session»: a /clear. That /clear means "carry on with this project", not "start
+# from the index", so the compaction leaves a mark and the next /clear honours
+# it once. Every other fresh start still forgets the active project.
+
+#: Past this a mark is stale: the same window a compaction note lives.
+KEEP_MAX_AGE_HOURS = 12
+
+
+def keep_path(root) -> Path:
+    return Path(root) / ".baton" / "local" / "keep-active.json"
+
+
+def mark_keep_active(root, project: SubProject, session: str = "") -> None:
+    """Ask the next /clear to keep `project` active. `session` is the one that
+    compacted, for the record: the /clear arrives with a new id."""
+    from lib import storage
+    storage.write_json(keep_path(root), {
+        "project": project.rel, "session": session or "", "at": storage.now_utc(),
+    })
+
+
+def take_keep_active(root, discovery: Discovery):
+    """The project the mark asks to keep, or None. The mark goes either way:
+    it is good for one fresh start only.
+
+    Honoured only while it is recent and names the project that is STILL
+    active: loading another one, or the root, since the compaction means the
+    person moved on. Never raises."""
+    from datetime import datetime, timezone
+    from lib import storage
+    path = keep_path(root)
+    data = storage.read_json(path)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    when = storage.from_utc(data.get("at"))
+    if when is None:
+        return None
+    age = (datetime.now(timezone.utc) - when).total_seconds()
+    if age < 0 or age > KEEP_MAX_AGE_HOURS * 3600:
+        return None
+    active = read_active(root, discovery)
+    if active is None or active.rel != data.get("project"):
+        return None
+    return active
