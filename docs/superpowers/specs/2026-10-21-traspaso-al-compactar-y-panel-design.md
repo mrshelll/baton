@@ -252,6 +252,37 @@ Otros proyectos   dolores · memoria · hace 2 d    factory-portal · continuar 
   configurado; columnas fijas para cifras que cambian (DEV-04); sin `hotkey` de dígito.
 - El panel solo muestra y lanza acciones; no edita.
 
+### Adenda (2026-10-22, tras la prueba manual): un recuadro, dos secciones
+
+En la prueba real, la línea suelta de baton bajo el recuadro de agentes se veía desalineada (MAR:
+dos barras apiladas con bordes que no coinciden se leen como dos productos o un descuido). Miguel
+decidió **un solo recuadro con dos secciones, las dos siempre visibles** (no pestañas: COM-05, y
+la franja de baton se ve siempre). Encima del prompt el motor no tiene pestañas ni marcos
+compartidos, así que baton y `agents-panel` cooperan con este contrato, idéntico en los dos repos:
+
+- **Sección:** cada mod dibuja su parte como un `Box` en columna, sin borde, con clave
+  `baton:section` o `agents-panel:section`. Su primera fila es el título (`baton` / `agentes`), en
+  negrita y `color="claude"`, como hoy el título de agentes; debajo, sus filas. La de baton es la
+  línea de estado de hoy sin el prefijo `baton · ` (el título ya lo dice): texto, botón de acción y
+  `clic → panel`.
+- **Recuadro:** un `Box` con clave `band:frame`, `borderStyle="round"`, `borderColor="claude"`,
+  `borderDimColor`, `flexDirection="column"`, `paddingX={1}` (el estilo del recuadro de agentes de
+  hoy). Sus hijos son secciones, en orden fijo: `agents-panel:section` primero, `baton:section`
+  después, cualquier otra sección conocida al final en el orden en que llegó; entre dos secciones,
+  una fila divisoria `─` atenuada del ancho interior.
+- **Componer:** el hook de cada mod mira lo de abajo (`next(e)`):
+  - vacío → `band:frame` con su sección sola;
+  - un `band:frame` → extrae sus secciones, añade la propia (reemplazando una con su misma clave),
+    ordena y reconstruye el recuadro con divisorias; da igual qué mod quede arriba en la cadena;
+  - cualquier otro árbol no vacío (una tarjeta de `clear-questions`): como hoy. baton se apila
+    debajo con su propio recuadro (columna `[lo de abajo, band:frame]`); `agents-panel` cede la
+    franja entera.
+  - `hasSurvey`: como hoy (nadie añade nada).
+- **Ancho:** el recuadro ocupa `bodyColumns`; el ancho interior es `bodyColumns - 4`. Las reglas de
+  ancho de cada sección (Ruling 14 en baton) se aplican sobre el ancho interior.
+- **Sin el otro mod:** cada uno dibuja su recuadro con su sección sola; se ve igual que hoy el de
+  agentes. `agents-panel` < 0.3.0 no conoce el contrato y cede ante el recuadro de baton.
+
 ## Lo que no cambia
 
 - Sin el mod (Claude Code sin mods u otra superficie): recibo, `Stop` por umbral y comando, como hoy;
