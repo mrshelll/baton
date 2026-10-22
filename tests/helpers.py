@@ -63,6 +63,18 @@ class BaseCase(unittest.TestCase):
 
         `env` overrides variables for this run; a None value removes one.
         """
+        rc, stdout, stderr = self.run_hook_text(event, payload, raw_input, env)
+        out = None
+        if stdout.strip():
+            try:
+                out = json.loads(stdout)
+            except json.JSONDecodeError:
+                out = None
+        return rc, out, stderr
+
+    def run_hook_text(self, event, payload, raw_input=None, env=None):
+        """Like `run_hook`, but stdout comes back raw: `pre-compact` speaks in
+        plain text, not JSON. Returns (returncode, stdout, stderr)."""
         data = raw_input if raw_input is not None else json.dumps(payload)
         environment = clean_env()
         for key, value in (env or {}).items():
@@ -78,13 +90,7 @@ class BaseCase(unittest.TestCase):
             input=data, capture_output=True, text=True, env=environment,
             cwd=str(self.project), check=False, timeout=30,
         )
-        out = None
-        if p.stdout.strip():
-            try:
-                out = json.loads(p.stdout)
-            except json.JSONDecodeError:
-                out = None
-        return p.returncode, out, p.stderr
+        return p.returncode, p.stdout, p.stderr
 
     def payload(self, event, **extra):
         base = {

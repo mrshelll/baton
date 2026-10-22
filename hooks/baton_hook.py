@@ -4,10 +4,12 @@
 Inviolable contract, and the reason this file exists instead of three: **this
 process ALWAYS exits 0**. A corrupt handoff, a stdin that is not JSON or a full
 disk cannot stop a Claude Code session from starting. All the logic sits inside
-an `except BaseException` that degrades to a readable message.
+an `except BaseException` that degrades to a readable message -- except for
+`pre-compact`, whose stdout is plain text read by the summarizer: there it
+degrades to silence and the log line.
 
-The event arrives as argv[1] (`session-start`, `post-compact`, `stop`,
-`tool-batch`) because hooks.json uses the `command: python3` + `args: [...]`
+The event arrives as argv[1] (`session-start`, `pre-compact`, `post-compact`,
+`stop`, `tool-batch`) because hooks.json uses the `command: python3` + `args: [...]`
 form, which never goes through a shell and is therefore immune to paths with
 spaces.
 """
@@ -36,6 +38,22 @@ def _read_input() -> dict:
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _write_text(text: str) -> None:
+    """Write plain text as is. `pre-compact` only: its stdout is not JSON."""
+    if not text:
+        return
+    try:
+        sys.stdout.write(text)
+    except Exception:
+        pass
+
+
+#: Events whose stdout Claude Code reads as plain text, never as JSON. An error
+#: there must print nothing: whatever is printed reaches the summarizer as an
+#: instruction and is shown raw to the person.
+PLAIN_TEXT_EVENTS = ("pre-compact",)
 
 
 def _emit(payload: dict) -> None:
@@ -125,6 +143,32 @@ def _hook_target(root, paths: storage.Paths, cfg, found):
     if paths.document.is_file():
         return paths, ""
     return None, ""
+
+
+def _pre_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[str, str]:
+    """Ask the compaction summarizer to append the handoff block. Plain text.
+
+    Claude Code appends this stdout, verbatim, to the summarizer's instructions:
+    the one moment the whole conversation is in front of a model at no extra
+    call. Only where `baton.py write` would write without asking -- the active
+    project or the root of a plain repo. Not `_hook_target`: at a root with a
+    handoff of its own and several projects it would pick the root, and the
+    block would overwrite a handoff that is not this session's. Anywhere else,
+    silence, and the compaction takes today's path.
+    """
+    here = entry.get("cwd") or os.getcwd()
+    target, why = projects.writable_target(root, found, here,
+                                           root_enabled=paths.document.is_file())
+    if target is None:
+        return "", f"silent: {why} target"
+    # Built before the note, so a failure here leaves no note promising a block
+    # that was never asked for. Noted before the text goes out: a block without
+    # a note would get the compacted session the old handoff on top of the new.
+    text = output.compaction_instruction(cfg, output.load_strings(cfg["language"]))
+    storage.note_compact_request(storage.Paths(target.path, document_rel=cfg["document"]),
+                                 entry.get("session_id") or "")
+    label = f" for {target.label}" if why == "active" else ""
+    return text, f"handoff block requested{label}"
 
 
 def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, str]:
@@ -321,6 +365,7 @@ def _tool_batch(entry: dict) -> dict:
 
 HANDLERS = {
     "session-start": _session_start,
+    "pre-compact": _pre_compact,
     "post-compact": _post_compact,
     "stop": _stop,
 }
@@ -365,14 +410,18 @@ def main() -> int:
             return 0
 
         payload, result = handler(entry, paths, cfg, root, found)
-        _emit(payload)
+        if event in PLAIN_TEXT_EVENTS:
+            _write_text(payload)
+        else:
+            _emit(payload)
         storage.log_event(paths, event=event, result=result,
                           source=entry.get("source") or entry.get("trigger") or "")
     except BaseException as exc:  # noqa: BLE001 - degrading is the requirement
-        _emit({"systemMessage": (
-            f"baton: could not complete '{event}' ({type(exc).__name__}: {exc}). "
-            "The session continues normally."
-        )})
+        if event not in PLAIN_TEXT_EVENTS:
+            _emit({"systemMessage": (
+                f"baton: could not complete '{event}' ({type(exc).__name__}: {exc}). "
+                "The session continues normally."
+            )})
         if paths is not None:
             storage.log_event(paths, event=event, result="error",
                               error=f"{type(exc).__name__}: {exc}")

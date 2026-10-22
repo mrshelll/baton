@@ -406,3 +406,53 @@ def wrap(body, mode, written, source, freshness_notice="", repeat=None,
         parts += [trim_notice, ""]
     parts += [s["document_open"], shown.rstrip("\n")] + tail
     return "\n".join(parts)
+
+
+#: The block the compaction summarizer is asked to append; PostCompact reads it.
+COMPACTION_TAG = "baton-handoff"
+
+#: The instruction names the language in words: the summarizer reads English.
+_LANGUAGE_NAMES = {"en": "English", "es": "Spanish"}
+
+
+def compaction_instruction(cfg: dict, strings: dict) -> str:
+    """What PreCompact prints: the summarizer's order to append the handoff.
+
+    In English whatever `language` says, because it speaks to a model, not to a
+    person. Claude Code also shows it raw on every /compact and keeps it in the
+    compacted context, so it stays within 12 lines. The mode criterion is the
+    one in step 2 of skills/baton/SKILL.md, compressed.
+    """
+    sections = strings["sections"]
+    required = sections[strings["required_section"]]
+    names = ", ".join(f'"## {name}"' + (" (required)" if name == required else "")
+                      for name in sections.values())
+    filler = (strings.get("filler_words") or ["none"])[0]
+    language = _LANGUAGE_NAMES.get(cfg["language"], cfg["language"])
+    limits = cfg["limits"]
+    tag = COMPACTION_TAG
+    return "\n".join([
+        "BATON HANDOFF (required, in addition to the summary): as the very last thing in your "
+        "output, after the summary, append a handoff for the next session, wrapped exactly "
+        f"like this, and write nothing after </{tag}>:",
+        f'<{tag} mode="memory">',
+        f"## {required}",
+        "...",
+        f"</{tag}>",
+        '- mode: "continue" only if all three hold: (1) a concrete task is already started and '
+        "unfinished; (2) its next step fits in one imperative sentence naming a file and a line; "
+        "(3) the user expects it resumed without being asked anything first.",
+        '- Otherwise, or if unsure, "memory": it is right almost always, and a wrong "continue" '
+        "makes the next session touch work nobody asked for.",
+        f"- Write it in {language}, in Markdown, with level-2 headings named exactly, in this "
+        f'order: {names}. Leave out any section that does not apply; never write "{filler}", '
+        '"N/A" or "-" as a section body.',
+        "- Budget for the whole document, including a header the code adds: at most "
+        f"{limits['lines']} lines and {limits['characters']} characters.",
+        "- Distill, do not copy the summary: what is done and what is not, with concrete paths; "
+        "one line per decision with its why; open questions in the words they were asked; what "
+        "reading the repository cannot recover. No frontmatter, dates, branch or commit: the "
+        "code adds them.",
+        "- The most recent messages are kept verbatim outside your view, so whatever happened at "
+        "the very end may already be done: do not assert that it is done or still pending.",
+    ]) + "\n"

@@ -4,14 +4,18 @@ A broken handoff, a corrupt stdin or a full disk cannot stop a Claude Code
 session from starting. These tests invoke the hook as a subprocess with JSON on
 stdin, exactly like the harness.
 """
+import importlib.util
+import io
 import json
 import subprocess
 import sys
 import unittest
+from contextlib import redirect_stdout
+from unittest import mock
 
 from tests.helpers import REPO_ROOT, BaseCase, clean_env
 
-EVENTS = ("session-start", "post-compact", "stop", "tool-batch")
+EVENTS = ("session-start", "post-compact", "stop", "tool-batch", "pre-compact")
 
 
 class TestAlwaysExitsZero(BaseCase):
@@ -56,6 +60,41 @@ class TestAlwaysExitsZero(BaseCase):
             [sys.executable, str(REPO_ROOT / "hooks" / "baton_hook.py")],
             input="{}", capture_output=True, text=True, env=clean_env(), timeout=30)
         self.assertEqual(p.returncode, 0, p.stderr)
+
+
+class TestPreCompactSpeaksPlainText(BaseCase):
+    """`pre-compact` stdout is handed verbatim to the summarizer and shown raw to
+    the person, so neither JSON nor an error message may ever reach it."""
+
+    def test_stdin_that_is_not_json_prints_nothing(self):
+        rc, out, err = self.run_hook_text("pre-compact", None, raw_input="{not json")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out, "")
+
+    def test_an_exception_prints_nothing_and_logs_the_error(self):
+        doc = self.project / ".baton" / "HANDOFF.md"
+        doc.parent.mkdir(parents=True)
+        doc.write_text("---\nbaton: 1\nmode: memory\n---\n## State\nx\n", encoding="utf-8")
+        spec = importlib.util.spec_from_file_location(
+            "baton_hook_under_test", REPO_ROOT / "hooks" / "baton_hook.py")
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+
+        def boom(*_):
+            raise RuntimeError("disk on fire")
+
+        stdin = io.StringIO(json.dumps(self.payload("PreCompact", trigger="auto")))
+        captured = io.StringIO()
+        with mock.patch.dict(hook.HANDLERS, {"pre-compact": boom}), \
+                mock.patch.object(sys, "argv", ["baton_hook.py", "pre-compact"]), \
+                mock.patch.object(sys, "stdin", stdin), redirect_stdout(captured):
+            rc = hook.main()
+        self.assertEqual(rc, 0)
+        self.assertEqual(captured.getvalue(), "")
+        last = (self.project / ".baton" / "local" / "log.jsonl").read_text(
+            encoding="utf-8").strip().splitlines()[-1]
+        self.assertEqual(json.loads(last)["result"], "error")
+        self.assertIn("disk on fire", json.loads(last)["error"])
 
 
 class TestHostileTranscripts(BaseCase):

@@ -95,6 +95,7 @@ class Paths:
         self.attempts = self.local / "attempts.json"
         self.pending = self.local / "pending.json"
         self.window = self.local / "window.json"
+        self.compact_request = self.local / "compact-request.json"
         self.log = self.local / "log.jsonl"
         self.lock = self.local / ".lock"
 
@@ -416,6 +417,36 @@ def note_request(paths: Paths) -> None:
     data = read_json(paths.pending)
     data["last_request"] = now_utc()
     write_json(paths.pending, data)
+
+
+def note_compact_request(paths: Paths, session_id: str) -> None:
+    """Record that this session's PreCompact asked the summarizer for the block.
+
+    The SessionStart of `compact` runs before -- or alongside -- the PostCompact,
+    so it cannot know whether the block came out. This note is what it can know:
+    that one was asked for, by which session. Overwrites any previous note."""
+    write_json(paths.compact_request,
+               {"session": session_id, "requested_at": now_utc(), "written": False})
+
+
+def read_compact_request(paths: Paths, session_id: str, max_age_hours: int = 12):
+    """The note, only when it belongs to `session_id` and is recent; else None.
+
+    An empty session id is no session: it would match any other note written
+    without one. Garbage, a missing stamp or one from the future read as None,
+    which is today's behaviour."""
+    if not session_id:
+        return None
+    data = read_json(paths.compact_request)
+    if data.get("session") != session_id:
+        return None
+    when = from_utc(data.get("requested_at"))
+    if when is None:
+        return None
+    age = (datetime.now(timezone.utc) - when).total_seconds()
+    if age < 0 or age > max_age_hours * 3600:
+        return None
+    return data
 
 
 # --- automatic handoff by context usage -----------------------------------
