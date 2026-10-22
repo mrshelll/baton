@@ -3,3 +3,5 @@ __pycache__/
 .DS_Store
 .baton/local/
 .baton/HANDOFF.md
+# Written by Claude Code each time it loads the mod from this folder.
+.claude-plugin/types/

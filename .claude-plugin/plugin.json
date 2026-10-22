@@ -9,6 +9,7 @@
   "homepage": "https://github.com/mrshelll/baton",
   "repository": "https://github.com/mrshelll/baton",
   "license": "MIT",
+  "types": "./types/index.d.ts",
   "keywords": [
     "handoff",
     "context",

@@ -1,5 +1,6 @@
 {
   "description": "baton: inyecta el traspaso al arrancar (SessionStart), pide al resumidor el traspaso antes de compactar (PreCompact), captura el resumen de la compactacion (PostCompact), avisa al modelo cuando la ventana de contexto se llena (PostToolBatch) y pide el traspaso en el primer momento libre, tras compactar o al cruzar un umbral de la ventana (Stop). Ninguno bloquea nunca el arranque: todo camino sale con codigo 0.",
+  "modules": ["./mod/register.tsx"],
   "hooks": {
     "SessionStart": [
       {
