@@ -545,9 +545,11 @@ def _panel(args) -> dict:
         # Directory names travel inside cloned repos: cleaned and capped like
         # the index's, before the mod puts them on a terminal.
         # `rel` stays raw: it is what `--project` matches first, so it is the one
-        # name that opens the right project when two folders share a name.
+        # name that opens the right project when two folders share a name. The
+        # mod draws `where`, never `rel`.
         "others": [{"name": output.sanitize(card.name)[:output.MAX_NAME], "rel": card.rel,
-                    "mode": card.mode, "age": output.age(card.date, strings)}
+                    "where": output.sanitize(card.rel), "mode": card.mode,
+                    "age": output.age(card.date, strings)}
                    for card in cards],
         "strings": {k: v for k, v in strings["panel"].items() if not k.startswith("_")},
         "error": None,
@@ -598,8 +600,15 @@ def cmd_panel(args) -> int:
         out = {"version": PANEL_VERSION, "language": language,
                "state": "error", "project": None, "handoff": None, "threshold": None,
                "others": [], "strings": panel,
-               "error": panel.get("error_unexpected", "baton: {detail}").format(detail=detail)}
-    print(json.dumps(out, ensure_ascii=False))
+               "error": output.sanitize(
+                   panel.get("error_unexpected", "baton: {detail}").format(detail=detail))}
+    # ASCII escapes: a stdout that cannot encode `✓` (a cp1252 pipe,
+    # PYTHONIOENCODING=ascii) must still get the JSON, and JSON decodes them back.
+    try:
+        sys.stdout.write(json.dumps(out) + "\n")
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001 - nobody left to read it; still no traceback
+        pass
     return OK
 
 

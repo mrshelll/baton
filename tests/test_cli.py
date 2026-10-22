@@ -272,8 +272,9 @@ class TestPanel(Base):
     def note_compaction(self, session, text):
         paths = self.storage.Paths(self.project)
         self.storage.note_compact_request(paths, session)
+        context = "Contexto" if "\n## Contexto\n" in text else "Context"
         self.storage.mark_compact_written(
-            paths, session, self.document.fingerprint(text, "Contexto"))
+            paths, session, self.document.fingerprint(text, context))
 
     def sub(self, rel):
         d = self.project / rel
@@ -502,6 +503,119 @@ class TestPanel(Base):
         self.assertIsNone(out["project"])
         self.assertIn("RuntimeError: boom", out["error"])
         self.assertIn("action_write", out["strings"])
+
+    def test_a_stdout_that_cannot_encode_unicode_still_gets_json(self):
+        """A cp1252 pipe or PYTHONIOENCODING=ascii must not cost the JSON."""
+        import os
+        import subprocess
+        self.spanish()
+        self.write()
+        env = dict(os.environ, PYTHONIOENCODING="ascii")
+        p = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "scripts" / "baton.py"), "panel", "--json",
+             "--session", "s1", "--cwd", str(self.project)],
+            capture_output=True, env=env, timeout=60)
+        self.assertEqual(p.returncode, OK, p.stderr)
+        self.assertEqual(p.stderr, b"")
+        out = self.json.loads(p.stdout.decode("ascii"))
+        self.assertIn("✓", out["strings"]["status_ready"])
+        self.assertIn("⚠", out["strings"]["band_error"])
+        self.assertEqual(out["handoff"]["sections"][0]["label"], "Bloqueos")
+
+    def test_a_folder_name_with_terminal_escapes_is_drawn_clean_and_still_opens(self):
+        """Ruling 13: `rel` is the handle, raw; `where` is what the mod draws."""
+        self.init_git()
+        evil = "proyectos/\x1b]0;x\x07radar"
+        self.sub(evil)
+        self.sub("proyectos/otro")
+        out = self.panel()
+        mine = next(o for o in out["others"] if o["rel"] == evil)
+        self.assertNotIn("\x1b", mine["where"])
+        self.assertNotIn("\x07", mine["where"])
+        self.assertEqual(mine["where"], "proyectos/]0;xradar")
+        self.assertNotIn("\x1b", mine["name"])
+        opened = self.panel("--project", mine["rel"])
+        self.assertEqual(opened["project"]["path"], str(self.project / evil))
+
+    def test_the_fallback_error_is_cleaned_too(self):
+        import contextlib
+        import importlib.util
+        import io
+        spec = importlib.util.spec_from_file_location(
+            "baton_cli_escape", REPO_ROOT / "scripts" / "baton.py")
+        cli = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cli
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(cli)
+
+        def broken(args):
+            raise RuntimeError("boom\x1b[2J")
+        cli._panel = broken
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["panel", "--json", "--cwd", str(self.project)])
+        out = self.json.loads(buf.getvalue())
+        self.assertIn("RuntimeError: boom[2J", out["error"])
+        self.assertNotIn("\x1b", out["error"])
+
+    # -- precedence and where the pieces come from ------------------------------
+    def window(self, session="s1", fired=(65,), percent=70):
+        self.storage.save_window(self.storage.Paths(self.project), {
+            "session": session, "fired": list(fired), "last": {"percent": percent}})
+
+    def test_ready_wins_over_a_threshold(self):
+        self.init_git()
+        self.note_compaction("s1", self.write("## State\nx\n"))
+        self.window()
+        out = self.panel()
+        self.assertEqual(out["state"], "ready")
+        self.assertEqual(out["threshold"], {"percent": 70, "tier": 65})
+
+    @unittest.skipIf(getattr(__import__("os"), "geteuid", lambda: 1)() == 0,
+                     "root reads anything")
+    def test_a_threshold_wins_over_an_unreadable_handoff_and_keeps_the_error(self):
+        import os
+        self.init_git()
+        self.write("## State\nx\n")
+        doc = self.project / ".baton" / "HANDOFF.md"
+        os.chmod(doc, 0)
+        self.addCleanup(os.chmod, doc, 0o644)
+        self.window()
+        out = self.panel()
+        self.assertEqual(out["state"], "threshold")
+        self.assertIn(str(doc), out["error"])
+        self.assertIsNone(out["handoff"])
+
+    def test_with_an_active_project_the_threshold_is_read_at_the_session_root(self):
+        sys.path.insert(0, str(REPO_ROOT))
+        from lib import projects
+        self.init_git()
+        self.sub("proyectos/radar")
+        self.sub("proyectos/otro")
+        found = projects.discover(self.project)
+        projects.set_active(self.project, next(p for p in found.projects if p.name == "radar"))
+        self.window()
+        out = self.panel()
+        self.assertEqual(out["project"]["name"], "radar")
+        self.assertEqual(out["state"], "threshold")
+        self.assertFalse((self.project / "proyectos" / "radar" / ".baton" / "local"
+                          / "window.json").exists())
+
+    def test_a_sub_project_speaks_its_own_language(self):
+        self.init_git()
+        self.sub("proyectos/radar")
+        sub = self.project / "proyectos" / "radar"
+        self.spanish(sub)
+        (sub / ".baton" / "HANDOFF.md").write_text(
+            "---\nbaton: 1\nmode: memory\ndate: 2026-09-03T10:00:00-05:00\n"
+            "branch: main\ncommit: abc1234\n---\n\n## Estado\nx\n\n## Blockers\ny\n",
+            encoding="utf-8")
+        out = self.panel("--project", "radar")
+        self.assertEqual(out["language"], "es")
+        self.assertEqual(out["handoff"]["sections"][0],
+                         {"slug": "blockers", "label": "Bloqueos", "items": ["• y"],
+                          "urgent": True})
+        self.assertEqual(out["strings"]["action_write"], "Escribir traspaso")
 
     # -- strings ---------------------------------------------------------------
     def test_strings_carry_the_band_and_panel_texts_in_the_configured_language(self):
