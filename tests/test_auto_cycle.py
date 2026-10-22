@@ -270,10 +270,8 @@ class TestCompactionInstruction(unittest.TestCase):
         self.assertIn("nothing after </baton-handoff>", text)
 
 
-class TestPostCompactWritesTheBlock(Base):
-    """With a note from this session's PreCompact and a valid block at the end of
-    the summary, the PostCompact writes the handoff and arms nothing. Anything
-    else falls back to today's path and leaves the previous handoff untouched."""
+class BlockCase(Base):
+    """Helpers for the PostCompact that writes the summarizer's block. No tests."""
 
     PREVIOUS = "---\nbaton: 1\nmode: continue\n---\n## State\nthe previous one\n"
 
@@ -323,6 +321,17 @@ class TestPostCompactWritesTheBlock(Base):
         self.assertEqual(self.paths.document.read_bytes(), self.before)
         self.assertTrue(self.armed(), "the fallback arms the flag as today")
         self.assertEqual(len(self.summaries()), 1)
+
+    def enable_at(self, where):
+        p = storage.Paths(where)
+        p.document.parent.mkdir(parents=True, exist_ok=True)
+        p.document.write_text("---\nbaton: 1\nmode: memory\n---\n## State\nx\n", encoding="utf-8")
+
+
+class TestPostCompactWritesTheBlock(BlockCase):
+    """With a note from this session's PreCompact and a valid block at the end of
+    the summary, the PostCompact writes the handoff and arms nothing. Anything
+    else falls back to today's path and leaves the previous handoff untouched."""
 
     # -- written -------------------------------------------------------------
     def test_a_valid_block_is_written_and_nothing_is_armed(self):
@@ -389,11 +398,6 @@ class TestPostCompactWritesTheBlock(Base):
         self.assertEqual(self.paths.document.read_bytes(), self.before)
         self.assertFalse(self.armed(radar))
         self.assertIs(self.request(radar)["written"], True)
-
-    def enable_at(self, where):
-        p = storage.Paths(where)
-        p.document.parent.mkdir(parents=True, exist_ok=True)
-        p.document.write_text("---\nbaton: 1\nmode: memory\n---\n## State\nx\n", encoding="utf-8")
 
     # -- the mod speaks instead ------------------------------------------------
     def test_with_the_mod_it_writes_and_prints_nothing(self):
@@ -509,6 +513,65 @@ class TestPostCompactWritesTheBlock(Base):
         self.assertEqual(document.extract_body(self.paths.document.read_text(encoding="utf-8")),
                          first)
         self.assertFalse(self.armed())
+
+
+class TestTheSubProjectsOwnConfig(BlockCase):
+    """An active sub-project with its own `language` and `limits`: both hooks use
+    the config `baton.py write` would use for it, not the root's."""
+
+    LIMIT = 22
+
+    def setUp(self):
+        super().setUp()
+        self.radar = self.project / "proyectos" / "radar"
+        other = self.project / "proyectos" / "instrumentos"
+        for where in (self.radar, other):
+            where.mkdir(parents=True)
+            self.enable_at(where)
+        (self.radar / ".claude").mkdir()
+        (self.radar / ".claude" / "baton.json").write_text(
+            json.dumps({"language": "es", "limits": {"lines": self.LIMIT}}), encoding="utf-8")
+        found = projects.discover(self.project)
+        active = next(p for p in found.projects if p.name.endswith("radar"))
+        projects.set_active(self.project, active, session="test-session")
+        self.radar_paths = storage.Paths(self.radar)
+        self.radar_before = self.radar_paths.document.read_bytes()
+
+    def test_the_instruction_speaks_the_sub_projects_language_and_budget(self):
+        _, out, _ = self.run_hook_text("pre-compact", self.payload("PreCompact", trigger="auto"))
+        self.assertIn('"## Estado" (required)', out)
+        self.assertIn("Spanish", out)
+        self.assertIn(f"at most {self.LIMIT} lines", out)
+
+    def test_a_block_over_the_sub_projects_limit_falls_back(self):
+        self.note(self.radar)
+        items = "".join(f"- punto {i}\n" for i in range(25))   # fits the root's 120
+        _, out, _ = self.post(self.summary(body=f"## Estado\n{items}"))
+        self.assertEqual(out, "")
+        self.assertEqual(self.radar_paths.document.read_bytes(), self.radar_before)
+        self.assertTrue(self.armed(self.radar))
+        self.assertIn("compaction block rejected: over_budget", self.last_result())
+
+    def test_a_spanish_block_is_written_with_the_sub_projects_sections(self):
+        self.note(self.radar)
+        _, out, err = self.post(self.summary(body="## Estado\nStripe migrado.\n"))
+        text = self.radar_paths.document.read_text(encoding="utf-8")
+        self.assertIn("Stripe migrado.", text, err)
+        self.assertIn("## Contexto\n", text)
+        self.assertNotIn("## Context\n", text)
+        self.assertEqual(self.request(self.radar)["fingerprint"],
+                         document.fingerprint(text, "Contexto"))
+        self.assertEqual(out.strip(),
+                         "baton: traspaso listo. Escribe /clear para seguir en una sesión nueva.")
+        self.assertEqual(self.paths.document.read_bytes(), self.before)
+
+    def test_an_english_block_is_refused_there(self):
+        # What the root's language would have accepted.
+        self.note(self.radar)
+        _, out, _ = self.post()
+        self.assertEqual(out, "")
+        self.assertEqual(self.radar_paths.document.read_bytes(), self.radar_before)
+        self.assertIn("compaction block rejected: invalid", self.last_result())
 
 
 class TestModActive(unittest.TestCase):

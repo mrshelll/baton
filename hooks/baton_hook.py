@@ -146,6 +146,33 @@ def _hook_target(root, paths: storage.Paths, cfg, found):
     return None, ""
 
 
+class _Destination:
+    """Where a compaction handoff goes, with THAT project's config and strings.
+
+    A sub-project may have its own `language` and `limits`: the instruction the
+    summarizer reads and the writer that checks its block must use the ones
+    `baton.py write` would use there, or the block is asked for in one shape and
+    judged in another."""
+
+    def __init__(self, target, why: str, cfg, strings: dict):
+        self.target, self.why, self.cfg, self.strings = target, why, cfg, strings
+        self.paths = storage.Paths(target.path, document_rel=cfg["document"])
+        self.label = f" for {target.label}" if why == "active" else ""
+
+
+def _compaction_destination(entry: dict, paths: storage.Paths, root, found):
+    """`(destination, why)` for both compaction hooks; destination None when
+    `baton.py write` would have to ask. One function, so the hook that asks for
+    the block and the one that writes it cannot disagree on where or how."""
+    here = entry.get("cwd") or os.getcwd()
+    target, why = projects.writable_target(root, found, here,
+                                           root_enabled=paths.document.is_file())
+    if target is None:
+        return None, why
+    cfg = config.load(target.path, parent=root)
+    return _Destination(target, why, cfg, output.load_strings(cfg["language"])), why
+
+
 def _pre_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[str, str]:
     """Ask the compaction summarizer to append the handoff block. Plain text.
 
@@ -157,19 +184,15 @@ def _pre_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[s
     block would overwrite a handoff that is not this session's. Anywhere else,
     silence, and the compaction takes today's path.
     """
-    here = entry.get("cwd") or os.getcwd()
-    target, why = projects.writable_target(root, found, here,
-                                           root_enabled=paths.document.is_file())
-    if target is None:
+    dest, why = _compaction_destination(entry, paths, root, found)
+    if dest is None:
         return "", f"silent: {why} target"
     # Built before the note, so a failure here leaves no note promising a block
     # that was never asked for. Noted before the text goes out: a block without
     # a note would get the compacted session the old handoff on top of the new.
-    text = output.compaction_instruction(cfg, output.load_strings(cfg["language"]))
-    storage.note_compact_request(storage.Paths(target.path, document_rel=cfg["document"]),
-                                 entry.get("session_id") or "")
-    label = f" for {target.label}" if why == "active" else ""
-    return text, f"handoff block requested{label}"
+    text = output.compaction_instruction(dest.cfg, dest.strings)
+    storage.note_compact_request(dest.paths, entry.get("session_id") or "")
+    return text, f"handoff block requested{dest.label}"
 
 
 def _mod_active(entry: dict, cfg) -> bool:
@@ -181,7 +204,7 @@ def _mod_active(entry: dict, cfg) -> bool:
     return entry.get("baton_mod") is True or cfg.get("display") == "panel"
 
 
-def _write_compaction_block(entry: dict, target, why: str, cfg) -> tuple[bool, str]:
+def _write_compaction_block(entry: dict, dest) -> tuple[bool, str]:
     """Write the handoff the summarizer appended, if this session asked for it.
 
     Returns `(written, what_happened)`, the second empty when there was nothing
@@ -192,10 +215,10 @@ def _write_compaction_block(entry: dict, target, why: str, cfg) -> tuple[bool, s
     the latest messages, so what it calls the next step may already be done.
     Every refusal leaves the previous handoff exactly as it was.
     """
-    if target is None:
+    if dest is None:
         return False, ""
     session = entry.get("session_id") or ""
-    wpaths = storage.Paths(target.path, document_rel=cfg["document"])
+    wpaths = dest.paths
     if storage.read_compact_request(wpaths, session) is None:
         return False, ""
     block = document.extract_compaction_block(entry.get("compact_summary") or "")
@@ -206,16 +229,15 @@ def _write_compaction_block(entry: dict, target, why: str, cfg) -> tuple[bool, s
         # than a summary, and writing would also delete it.
         return False, "compaction block not written: draft in progress"
     asked, body = block
-    strings = output.load_strings(cfg["language"])
-    built = handoff.build(body, document.SAFE_MODE, target.path, cfg, strings)
-    result = handoff.write_if_fits(wpaths, built, cfg)
+    strings = dest.strings
+    built = handoff.build(body, document.SAFE_MODE, dest.target.path, dest.cfg, strings)
+    result = handoff.write_if_fits(wpaths, built, dest.cfg)
     if result != "written":
         return False, f"compaction block rejected: {result}"
     storage.mark_compact_written(
         wpaths, session, document.fingerprint(built.final, strings["context_section"]))
     forced = f", the block asked for {asked}" if asked != document.SAFE_MODE else ""
-    label = f" for {target.label}" if why == "active" else ""
-    return True, f"handoff written from compaction{label} in memory mode{forced}"
+    return True, f"handoff written from compaction{dest.label} in memory mode{forced}"
 
 
 def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found):
@@ -240,11 +262,9 @@ def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found):
     storage.save_summary(target, entry.get("compact_summary") or "",
                          trigger=entry.get("trigger") or "auto")
 
-    here = entry.get("cwd") or os.getcwd()
-    destination, why = projects.writable_target(root, found, here,
-                                                root_enabled=paths.document.is_file())
     try:
-        written, what = _write_compaction_block(entry, destination, why, cfg)
+        dest, _ = _compaction_destination(entry, paths, root, found)
+        written, what = _write_compaction_block(entry, dest)
     except Exception as exc:  # noqa: BLE001 - the fallback below must still run
         # Nothing after the write itself can raise, so a failure here means the
         # handoff was not replaced, and the flag is what keeps it from being lost.
@@ -261,7 +281,7 @@ def _post_compact(entry: dict, paths: storage.Paths, cfg, root, found):
     if written:
         if _mod_active(entry, cfg):
             return "", f"summary saved, {what}"
-        ready = output.load_strings(cfg["language"])["auto_handoff"]["ready"]
+        ready = dest.strings["auto_handoff"]["ready"]
         return ready + "\n", f"summary saved, {what}"
     return "", "summary saved, handoff pending" + (f"; {what}" if what else "")
 
