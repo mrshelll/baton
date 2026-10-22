@@ -87,7 +87,10 @@ function face(data: PanelData): Face {
   }
   if (h && data.state !== 'none') {
     const open = pending(data)
-    if (open > 0) return { text: fill(s.band_pending, { n: open, age: h.age }), tone: 'warning', action: null, hint: true }
+    if (open > 0) {
+      const template = open === 1 ? s.band_pending_one : s.band_pending
+      return { text: fill(template, { n: open, age: h.age }), tone: 'warning', action: null, hint: true }
+    }
     const mode = h.mode === 'continue' ? s.mode_continue : s.mode_memory
     return { text: fill(s.band_normal, { age: h.age, mode }), tone: undefined, action: null, hint: true }
   }

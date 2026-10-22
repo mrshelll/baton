@@ -128,6 +128,7 @@
     "band_none": "baton · sin traspaso en este proyecto",
     "band_error": "baton · ⚠ no se pudo leer el traspaso",
     "band_pending": "baton · ⚠ {n} pendientes · {age}",
+    "band_pending_one": "baton · ⚠ 1 pendiente · {age}",
     "band_no_project": "baton · ningún proyecto cargado",
     "hint_open": "clic → panel",
     "action_new_session": "Sesión nueva",

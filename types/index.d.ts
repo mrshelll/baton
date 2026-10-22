@@ -57,6 +57,8 @@ export type PanelStrings = {
   band_none: string
   band_error: string
   band_pending: string
+  /** `band_pending` for exactly one item left. */
+  band_pending_one: string
   band_no_project: string
   hint_open: string
   action_new_session: string

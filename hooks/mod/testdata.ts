@@ -122,7 +122,7 @@ export const SAMPLE = String.raw`
 
 /**
  * `SAMPLE_ES` is the same command in Spanish (`.claude/baton.json` `{"language": "es"}`),
- * run at 17ba70f with the `actionFailed` key in the templates: the root handoff
+ * run at 7e9705d with `band_pending_one` added to the templates: the root handoff
  * written with `baton.py write --mode memory --project .` (two blockers), a
  * sub-project `sub/radar`, and the project path replaced as above.
  */
@@ -203,6 +203,7 @@ export const SAMPLE_ES = String.raw`
     "band_none": "baton \u00b7 sin traspaso en este proyecto",
     "band_error": "baton \u00b7 \u26a0 no se pudo leer el traspaso",
     "band_pending": "baton \u00b7 \u26a0 {n} pendientes \u00b7 {age}",
+    "band_pending_one": "baton \u00b7 \u26a0 1 pendiente \u00b7 {age}",
     "band_no_project": "baton \u00b7 ning\u00fan proyecto cargado",
     "hint_open": "clic \u2192 panel",
     "action_new_session": "Sesi\u00f3n nueva",

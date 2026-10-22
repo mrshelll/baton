@@ -66,7 +66,21 @@ test('bandLine en: the same faces in English', () => {
   expect(bandLine(faces.error(EN), WIDE)).toMatchObject({ text: 'baton · ⚠ could not read the handoff', action: null })
   expect(bandLine(faces.calm(EN), WIDE)).toMatchObject({ text: 'baton · handoff just now · memory', action: null, hint: 'click → panel' })
   // SAMPLE has one blocker.
-  expect(bandLine(EN, WIDE)).toMatchObject({ text: 'baton · ⚠ 1 open · just now', tone: 'warning' })
+  expect(bandLine(EN, WIDE)).toMatchObject({ text: 'baton · ⚠ 1 open item · just now', tone: 'warning' })
+})
+
+/** The fixture with exactly `n` blockers left. */
+function blockers(d: PanelData, n: number): PanelData {
+  const sections = d.handoff!.sections.map(s => (s.urgent ? { ...s, items: Array.from({ length: n }, (_, i) => `${i + 1}. b${i}`) } : s))
+  return { ...d, state: 'normal', handoff: { ...d.handoff!, sections } }
+}
+
+test('bandLine: one item left reads in the singular, two or more in the plural, in both languages', () => {
+  expect(bandLine(blockers(ES, 1), WIDE)).toMatchObject({ text: 'baton · ⚠ 1 pendiente · recién', tone: 'warning', hint: 'clic → panel' })
+  expect(bandLine(blockers(ES, 2), WIDE).text).toBe('baton · ⚠ 2 pendientes · recién')
+  expect(bandLine(blockers(ES, 3), WIDE).text).toBe('baton · ⚠ 3 pendientes · recién')
+  expect(bandLine(blockers(EN, 1), WIDE)).toMatchObject({ text: 'baton · ⚠ 1 open item · just now', tone: 'warning', hint: 'click → panel' })
+  expect(bandLine(blockers(EN, 2), WIDE).text).toBe('baton · ⚠ 2 open · just now')
 })
 
 test('bandLine: the mode in the project language, continue as well as memory', () => {
@@ -290,6 +304,15 @@ test('on desktop the band is left to what is beneath, untouched', async ($, on) 
 test('before the first load, the band is what is beneath', async ($, on) => {
   world(on, faces.ready(ES))
   expect(await (await mount($)).drawn()).toMatchObject({ type: 'engine' })
+})
+
+test('a band mounted before the first load ends shows baton\'s line once the panel loads', async ($, on) => {
+  const w = world(on, faces.ready(ES))
+  const ui = await mount($)
+  expect(await ui.drawn()).toMatchObject({ type: 'engine' })
+  await load($, w)
+  expect(await ui.drawn()).toMatchObject({ type: 'Box', props: { key: 'baton:band' } })
+  expect(await ui.find({ key: 'baton:open' })).toMatchObject({ text: 'baton · ✓ traspaso listo · recién' })
 })
 
 test('with no row to draw in, or no column, the band is what is beneath', async ($, on) => {

@@ -30,6 +30,7 @@ export const FALLBACK_STRINGS: PanelStrings = {
   band_none: 'baton · no handoff in this project',
   band_error: 'baton · ⚠ could not read the handoff',
   band_pending: 'baton · ⚠ {n} open · {age}',
+  band_pending_one: 'baton · ⚠ 1 open item · {age}',
   band_no_project: 'baton · no project loaded',
   hint_open: 'click → panel',
   action_new_session: 'New session',
