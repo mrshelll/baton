@@ -232,5 +232,261 @@ class TestDoctorContextWindow(Base):
         self.assertIn("switched off", p.stdout)
 
 
+class TestPanel(Base):
+    """`panel --json`: everything the mod draws, parsed here and only here.
+
+    The mod calls it every turn, so it never asks and never fails loudly: any
+    situation it can describe comes back as JSON with exit code 0."""
+
+    BODY = ("## Estado\nMigración a medias.\n\n"
+            "## Decisiones y su porqué\n- usar X -- porque Y\n\n"
+            "## Bloqueos\n1. ¿seguimos con A o con B?\n2. falta la clave de **staging**\n\n"
+            "## Siguiente paso\nterminar pay.ts:40\n\n"
+            "## Trampas\n- no tocar el seed\n")
+
+    def setUp(self):
+        super().setUp()
+        sys.path.insert(0, str(REPO_ROOT))
+        import json
+        from lib import document, storage
+        self.json, self.document, self.storage = json, document, storage
+
+    def spanish(self, where=None):
+        claude = (where or self.project) / ".claude"
+        claude.mkdir(parents=True, exist_ok=True)
+        (claude / "baton.json").write_text('{"language": "es"}', encoding="utf-8")
+
+    def write(self, body=None, mode="memory"):
+        self.draft(body or self.BODY)
+        p = self.cli("write", "--mode", mode)
+        self.assertEqual(p.returncode, OK, p.stderr)
+        return self.handoff()
+
+    def panel(self, *args, session="s1"):
+        extra = ("--session", session) if session is not None else ()
+        p = self.cli("panel", "--json", *extra, *args)
+        self.assertEqual(p.returncode, OK, p.stderr)
+        self.assertEqual(p.stderr, "", "the mod calls this every turn: nothing on stderr")
+        return self.json.loads(p.stdout)
+
+    def note_compaction(self, session, text):
+        paths = self.storage.Paths(self.project)
+        self.storage.note_compact_request(paths, session)
+        self.storage.mark_compact_written(
+            paths, session, self.document.fingerprint(text, "Contexto"))
+
+    def sub(self, rel):
+        d = self.project / rel
+        local = d / ".baton"
+        local.mkdir(parents=True)
+        (local / "HANDOFF.md").write_text(
+            "---\nbaton: 1\nmode: continue\ndate: 2026-09-03T10:00:00-05:00\n"
+            "branch: main\ncommit: abc1234\n---\n\n## State\nx\n", encoding="utf-8")
+
+    # -- states ----------------------------------------------------------------
+    def test_normal_carries_the_whole_handoff_in_panel_order(self):
+        self.init_git()
+        self.spanish()
+        self.write()
+        out = self.panel()
+        self.assertEqual(out["version"], 1)
+        self.assertEqual(out["language"], "es")
+        self.assertEqual(out["state"], "normal")
+        self.assertIsNone(out["error"])
+        self.assertIsNone(out["threshold"])
+        self.assertEqual(out["project"]["path"], str(self.project))
+        self.assertEqual(out["project"]["name"], self.project.name)
+        h = out["handoff"]
+        self.assertEqual(h["mode"], "memory")
+        self.assertEqual(h["written_by"], "manual")
+        self.assertFalse(h["stale"])
+        self.assertTrue(h["date"])
+        self.assertEqual(h["age"], "recién")
+        self.assertEqual(h["lines"], len(self.handoff().rstrip("\n").split("\n")))
+        self.assertEqual([s["slug"] for s in h["sections"]],
+                         ["blockers", "next", "state", "decisions", "traps"])
+        self.assertEqual([s["urgent"] for s in h["sections"]],
+                         [True, False, False, False, False])
+        blockers = h["sections"][0]
+        self.assertEqual(blockers["label"], "Bloqueos")
+        self.assertEqual(blockers["items"],
+                         ["1. ¿seguimos con A o con B?", "2. falta la clave de staging"])
+        self.assertEqual(h["sections"][1]["items"], ["• terminar pay.ts:40"])
+        self.assertNotIn("Contexto", [s["label"] for s in h["sections"]],
+                         "the git section is baton's, not the work")
+
+    def test_items_are_not_trimmed(self):
+        self.init_git()
+        long_line = "palabra " * 60
+        self.spanish()
+        self.write("## Estado\n" + long_line + "\n")
+        items = self.panel()["handoff"]["sections"][0]["items"]
+        self.assertEqual(items, ["• " + long_line.strip()], "the mod trims, not Python")
+
+    def test_ready_after_this_sessions_compaction_wrote_the_current_handoff(self):
+        self.init_git()
+        self.spanish()
+        text = self.write()
+        self.note_compaction("s1", text)
+        out = self.panel()
+        self.assertEqual(out["state"], "ready")
+        self.assertEqual(out["handoff"]["written_by"], "compaction")
+
+    def test_another_sessions_compaction_is_not_ready_but_still_wrote_it(self):
+        self.init_git()
+        self.spanish()
+        text = self.write()
+        self.note_compaction("other-session", text)
+        out = self.panel(session="s1")
+        self.assertNotEqual(out["state"], "ready")
+        self.assertEqual(out["handoff"]["written_by"], "compaction")
+
+    def test_a_handoff_rewritten_by_hand_after_the_compaction_is_not_ready(self):
+        self.init_git()
+        self.spanish()
+        self.note_compaction("s1", self.write())
+        self.write("## Estado\notra cosa\n")
+        out = self.panel()
+        self.assertEqual(out["state"], "normal")
+        self.assertEqual(out["handoff"]["written_by"], "manual")
+
+    def test_without_a_session_nothing_is_ready_and_no_threshold_shows(self):
+        self.init_git()
+        text = self.write("## State\nx\n")
+        self.note_compaction("", text)
+        out = self.panel(session=None)
+        self.assertEqual(out["state"], "normal")
+        self.assertIsNone(out["threshold"])
+
+    def test_threshold_when_this_session_crossed_one(self):
+        self.init_git()
+        self.write("## State\nx\n")
+        self.storage.save_window(self.storage.Paths(self.project), {
+            "session": "s1", "fired": [65, 80], "last": {"percent": 82}})
+        out = self.panel()
+        self.assertEqual(out["state"], "threshold")
+        self.assertEqual(out["threshold"], {"percent": 82, "tier": 80})
+
+    def test_another_sessions_threshold_does_not_count(self):
+        self.init_git()
+        self.write("## State\nx\n")
+        self.storage.save_window(self.storage.Paths(self.project), {
+            "session": "old", "fired": [65], "last": {"percent": 70}})
+        out = self.panel()
+        self.assertEqual(out["state"], "normal")
+        self.assertIsNone(out["threshold"])
+
+    def test_none_without_a_handoff(self):
+        out = self.panel()
+        self.assertEqual(out["state"], "none")
+        self.assertIsNone(out["handoff"])
+        self.assertEqual(out["project"]["path"], str(self.project))
+        self.assertEqual(out["others"], [])
+        self.assertEqual(out["language"], "en")
+
+    @unittest.skipIf(getattr(__import__("os"), "geteuid", lambda: 1)() == 0,
+                     "root reads anything")
+    def test_an_unreadable_handoff_is_an_error_state_with_exit_zero(self):
+        import os
+        self.init_git()
+        self.write("## State\nx\n")
+        doc = self.project / ".baton" / "HANDOFF.md"
+        os.chmod(doc, 0)
+        self.addCleanup(os.chmod, doc, 0o644)
+        out = self.panel()
+        self.assertEqual(out["state"], "error")
+        self.assertIsNone(out["handoff"])
+        self.assertIn(str(doc), out["error"])
+
+    def test_stale_when_the_code_moved_since(self):
+        self.init_git()
+        self.write("## State\nx\n")
+        self.git("checkout", "-q", "-b", "other")
+        self.assertTrue(self.panel()["handoff"]["stale"])
+
+    # -- where -----------------------------------------------------------------
+    def test_an_ambiguous_root_shows_no_project_and_lists_the_others(self):
+        self.init_git()
+        self.sub("proyectos/radar")
+        self.sub("proyectos/instrumentos")
+        out = self.panel()
+        self.assertIsNone(out["project"])
+        self.assertEqual(out["state"], "none")
+        self.assertIsNone(out["handoff"])
+        self.assertEqual([o["name"] for o in out["others"]], ["instrumentos", "radar"])
+        self.assertEqual(out["others"][0]["mode"], "continue")
+        self.assertTrue(out["others"][0]["age"].endswith("ago"))
+
+    def test_a_named_project_is_shown_and_the_rest_are_others(self):
+        self.init_git()
+        self.sub("proyectos/radar")
+        self.sub("proyectos/instrumentos")
+        out = self.panel("--project", "radar")
+        self.assertEqual(out["project"]["name"], "radar")
+        self.assertEqual(out["state"], "normal")
+        self.assertEqual([o["name"] for o in out["others"]], ["instrumentos"])
+
+    def test_an_unknown_project_name_is_no_project_not_a_failure(self):
+        self.init_git()
+        self.sub("proyectos/radar")
+        out = self.panel("--project", "nope")
+        self.assertIsNone(out["project"])
+        self.assertEqual(out["state"], "none")
+
+    # -- untrusted input and failures -----------------------------------------
+    def test_an_unknown_language_reports_the_english_it_fell_back_to(self):
+        claude = self.project / ".claude"; claude.mkdir()
+        (claude / "baton.json").write_text('{"language": "klingon"}', encoding="utf-8")
+        out = self.panel()
+        self.assertEqual(out["language"], "en")
+        self.assertEqual(out["strings"]["action_write"], "Write handoff")
+
+    def test_terminal_escapes_in_the_document_do_not_reach_the_mod(self):
+        d = self.project / ".baton"; d.mkdir(parents=True)
+        (d / "HANDOFF.md").write_text(
+            "---\nbaton: 1\nmode: memory\ndate: 2026-01-01\x1b[2J\nbranch: main\n"
+            "commit: abc1234\n---\n\n## State\nx\x1b]0;pwned\x07y\n", encoding="utf-8")
+        out = self.panel()
+        self.assertEqual(out["handoff"]["date"], "2026-01-01[2J")
+        self.assertEqual(out["handoff"]["sections"][0]["items"], ["• x]0;pwnedy"])
+
+    def test_an_unexpected_failure_is_still_json_and_exit_zero(self):
+        import contextlib
+        import importlib.util
+        import io
+        spec = importlib.util.spec_from_file_location(
+            "baton_cli_under_test", REPO_ROOT / "scripts" / "baton.py")
+        cli = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cli   # @dataclass looks its module up there
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(cli)
+
+        def broken(args):
+            raise RuntimeError("boom")
+        cli._panel = broken
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli.main(["panel", "--json", "--cwd", str(self.project)])
+        self.assertEqual(code, OK)
+        out = self.json.loads(buf.getvalue())
+        self.assertEqual(out["state"], "error")
+        self.assertIsNone(out["project"])
+        self.assertIn("RuntimeError: boom", out["error"])
+        self.assertIn("action_write", out["strings"])
+
+    # -- strings ---------------------------------------------------------------
+    def test_strings_carry_the_band_and_panel_texts_in_the_configured_language(self):
+        self.init_git()
+        self.spanish()
+        self.write()
+        s = self.panel()["strings"]
+        self.assertTrue(all(isinstance(v, str) for v in s.values()))
+        self.assertEqual(s["action_new_session"], "Sesión nueva")
+        self.assertEqual(s["action_write"], "Escribir traspaso")
+        self.assertIn("✓ traspaso listo", s["band_ready"])
+        self.assertIn("sin traspaso en este proyecto", s["band_none"])
+        self.assertIn("Aún no hay traspaso en este proyecto", s["empty_title"])
+
+
 if __name__ == "__main__":
     unittest.main()

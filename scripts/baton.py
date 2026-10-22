@@ -5,7 +5,9 @@ Subcommands:
   context   what the model needs to know before drafting (kept short)
   write     validate the draft, measure it, compose it and write it
   show      the current handoff and what injecting it costs
+  load      deliver one project's handoff and make it the active one
   doctor    diagnose why baton is not doing what you expect
+  panel     everything baton's mod draws, as JSON (always exit 0)
 
 The exit codes are the protocol with the model, not decoration, and that is why
 they differ: "does not fit" is fixed by trimming and "is put together wrong" is
@@ -457,6 +459,141 @@ def _window_line(ctx) -> str:
             f"asks at {', '.join(f'{t}%' for t in cw['thresholds'])}")
 
 
+#: The shape `panel --json` promises the mod. Bump only on an incompatible change.
+PANEL_VERSION = 1
+
+
+def _panel_target(args, root: Path, root_cfg, found):
+    """The project the panel shows, or None. Never asks: the mod calls this
+    every turn, so the question `_resolve` would print becomes `project: null`
+    and the list of projects to open."""
+    if args.project is not None:
+        target, _ = projects.resolve(root, found, args.project)
+        return target
+    here = Path(args.cwd or os.getcwd())
+    root_enabled = storage.Paths(root, document_rel=root_cfg["document"]).document.is_file()
+    target, _ = projects.writable_target(root, found, here, root_enabled)
+    return target
+
+
+def _panel_threshold(root: Path, session: str):
+    """`{percent, tier}` once THIS session crossed a threshold, else None. The
+    window state lives at the session's root, not at the project shown."""
+    if not session:
+        return None
+    state = storage.read_window(storage.Paths(root), session)
+    if not state["fired"]:
+        return None
+    percent = state["last"].get("percent")
+    if not isinstance(percent, int) or isinstance(percent, bool):
+        percent = None
+    return {"percent": percent, "tier": max(state["fired"])}
+
+
+def _panel_handoff(target, paths: storage.Paths, strings: dict, session: str):
+    """`(handoff, ready)` from the document on disk. Raises OSError when it
+    exists and cannot be read; the caller turns that into the error state."""
+    text = paths.document.read_text(encoding="utf-8", errors="replace")
+    fields = document.read_fields(text)
+    fingerprint = document.fingerprint(text, strings["context_section"])
+    # Who wrote it is the note's business whatever session it belongs to; being
+    # ready to start over is only this session's.
+    note = storage.read_json(paths.compact_request)
+    by_compaction = note.get("written") is True and note.get("fingerprint") == fingerprint
+    mine = storage.read_compact_request(paths, session) or {}
+    ready = mine.get("written") is True and mine.get("fingerprint") == fingerprint
+    notice = gitinfo.freshness(target.path, fields.get("date"), fields.get("branch", ""),
+                               fields.get("commit", ""), strings).notice()
+    return {
+        "mode": document.read_mode(text),
+        "date": output.sanitize(fields["date"]) if "date" in fields else None,
+        "age": output.age(fields.get("date", ""), strings),
+        "lines": budget.measure(text).lines,
+        "written_by": "compaction" if by_compaction else "manual",
+        "stale": bool(notice),
+        "sections": output.panel_sections(text, strings),
+    }, ready
+
+
+def _panel(args) -> dict:
+    """The JSON `panel --json` prints, version `PANEL_VERSION`."""
+    root = storage.project_root(args.cwd or os.getcwd())
+    root_cfg = config.load(root)
+    found = projects.discover(root, depth=root_cfg["discovery"]["depth"],
+                              max_dirs=root_cfg["discovery"]["max_dirs"],
+                              document_rel=root_cfg["document"])
+    target = _panel_target(args, root, root_cfg, found)
+    cfg = config.load(target.path, parent=root) if target else root_cfg
+    strings = output.load_strings(cfg["language"])
+    # The language the strings are in: an unknown one fell back to English.
+    language = (cfg["language"] if cfg["language"] in output.available_languages()
+                else output.DEFAULT_LANGUAGE)
+    session = args.session or ""
+
+    others = [project for project in found.projects
+              if target is None or target.project != project]
+    cards = [projects.describe(project, root_cfg["document"]) for project in others]
+    out = {
+        "version": PANEL_VERSION, "language": language, "state": "none",
+        "project": None, "handoff": None, "threshold": None,
+        # Directory names travel inside cloned repos: cleaned and capped like
+        # the index's, before the mod puts them on a terminal.
+        "others": [{"name": output.sanitize(card.name)[:output.MAX_NAME], "mode": card.mode,
+                    "age": output.age(card.date, strings)} for card in cards],
+        "strings": {k: v for k, v in strings["panel"].items() if not k.startswith("_")},
+        "error": None,
+    }
+    if target is None:
+        return out
+
+    paths = storage.Paths(target.path, document_rel=cfg["document"])
+    out["project"] = {"name": output.sanitize(target.path.name)[:output.MAX_NAME],
+                      "path": str(target.path)}
+    out["threshold"] = _panel_threshold(root, session)
+    ready = False
+    if paths.document.is_file():
+        try:
+            out["handoff"], ready = _panel_handoff(target, paths, strings, session)
+        except OSError:
+            out["error"] = output.sanitize(
+                strings["panel"]["error_read"].format(path=paths.document))
+    if ready:
+        out["state"] = "ready"
+    elif out["threshold"]:
+        out["state"] = "threshold"
+    elif out["error"]:
+        out["state"] = "error"
+    elif out["handoff"]:
+        out["state"] = "normal"
+    return out
+
+
+def cmd_panel(args) -> int:
+    """Everything baton's mod draws, as JSON: the mod draws and launches, the
+    handoff is read and understood here, once.
+
+    Exit 0 whenever JSON can be written: the mod calls this every turn, and a
+    situation it can describe -- no project, no handoff, an unreadable one --
+    is a state to draw, not a failure."""
+    try:
+        out = _panel(args)
+    except Exception as exc:  # noqa: BLE001 - the panel draws the failure instead
+        language, panel = output.DEFAULT_LANGUAGE, {}
+        try:
+            language = config.load(storage.project_root(args.cwd or os.getcwd()))["language"]
+            panel = {k: v for k, v in output.load_strings(language)["panel"].items()
+                     if not k.startswith("_")}
+        except Exception:  # noqa: BLE001 - an English line beats no JSON at all
+            pass
+        detail = f"{type(exc).__name__}: {exc}"
+        out = {"version": PANEL_VERSION, "language": language,
+               "state": "error", "project": None, "handoff": None, "threshold": None,
+               "others": [], "strings": panel,
+               "error": panel.get("error_unexpected", "baton: {detail}").format(detail=detail)}
+    print(json.dumps(out, ensure_ascii=False))
+    return OK
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="baton", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -484,6 +621,11 @@ def main(argv=None) -> int:
                     project_flag=False)
     load.add_argument("project", help="project name, relative path, or `.` for the root")
     with_cwd("doctor", "diagnose the installation and the project state", cmd_doctor)
+    panel = with_cwd("panel", "everything baton's mod draws, as JSON", cmd_panel)
+    panel.add_argument("--json", action="store_true", required=True,
+                       help="the only output there is; required so a later one can differ")
+    panel.add_argument("--session", default="",
+                       help="the session asking: what is ready or crossed is per session")
 
     args = parser.parse_args(argv)
     return args.func(args)

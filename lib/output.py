@@ -100,7 +100,8 @@ def _name_column(cards):
     return names, max((len(n) for n in names), default=0)
 
 
-def _age(date: str, strings: dict) -> str:
+def age(date: str, strings: dict) -> str:
+    """"3 h ago" from a handoff's date: the index, the receipt and the panel."""
     from lib import gitinfo
     days = gitinfo.days_since(date)
     if days is None:
@@ -131,7 +132,7 @@ def index_block(root, cards, strings=None, truncated: bool = False) -> str:
     lines = [
         _disable_closing_tag(
             i["line"].format(name=name.ljust(width), mode=card.mode.ljust(8),
-                             age=_age(card.date, s), rel=sanitize(card.rel)[:200]), tag)
+                             age=age(card.date, s), rel=sanitize(card.rel)[:200]), tag)
         for name, card in zip(names, cards)
     ]
 
@@ -199,6 +200,17 @@ def _width() -> int:
     return max(min(RECEIPT_WIDTH, columns - RECEIPT_MARGIN), 24)
 
 
+def _marked(text: str):
+    """`(marker, body)` of one line of the document, or None when it shows
+    nothing. The author's own marker is kept; a bare line gets a bullet."""
+    text = RE_EMPHASIS.sub("", " ".join(sanitize(text).split()))
+    if not text:
+        return None
+    found = RE_LIST_MARKER.match(text)
+    marker = text[found.start():found.end()].strip() + " " if found else "• "
+    return marker, (text[found.end():] if found else text)
+
+
 def _item(text: str) -> list:
     """One line of the document -> the display lines it takes.
 
@@ -212,12 +224,10 @@ def _item(text: str) -> list:
     item sits under its text, so a new marker at the left margin is visibly a new
     item and not more of the last one.
     """
-    text = RE_EMPHASIS.sub("", " ".join(sanitize(text).split()))
-    if not text:
+    marked = _marked(text)
+    if marked is None:
         return []
-    found = RE_LIST_MARKER.match(text)
-    marker = text[found.start():found.end()].strip() + " " if found else "\u2022 "
-    body = text[found.end():] if found else text
+    marker, body = marked
     width = max(_width() - len(marker), 24)
     wrapped = textwrap.wrap(body, width=width) or [""]
     return [marker + wrapped[0]] + [" " * len(marker) + line for line in wrapped[1:]]
@@ -277,6 +287,32 @@ def _what_was_left(sections: dict, mode: str):
     return chosen, left[chosen], [label for label in left if label != chosen]
 
 
+#: The panel's reading order: what is open first, the secondary last.
+PANEL_ORDER = ("blockers", "next", "state", "decisions", "traps")
+
+
+def panel_sections(text: str, strings: dict) -> list:
+    """The handoff's sections for the panel, in `PANEL_ORDER`, named in the
+    configured language whatever language wrote them.
+
+    One item per line of the document, with its marker and whole: the mod trims
+    to the width it has, which only it knows. A section that matches no known
+    label -- possible only by hand-editing, `write` refuses them -- is left out,
+    and so is one that shows nothing."""
+    known, context_labels = _labels_everywhere()
+    slug_of = {norm: slug for slug, norms in known.items() for norm in norms}
+    items: dict = {}
+    for label, content in document.read_sections(text, strings["context_section"]).items():
+        norm = document.normalize_label(label)
+        if norm in context_labels or norm not in slug_of:
+            continue
+        lines = (_marked(line) for line in content.split("\n"))
+        items.setdefault(slug_of[norm], []).extend(m + b for m, b in filter(None, lines))
+    return [{"slug": slug, "label": strings["sections"][slug], "items": items[slug],
+             "urgent": slug == "blockers"}
+            for slug in PANEL_ORDER if items.get(slug)]
+
+
 def _body(items, label, others, max_lines, r) -> list:
     """Fit whole items into the line budget, and account for what did not.
 
@@ -334,7 +370,7 @@ def receipt(document_text="", mode="", strings=None, cards=(), stale=False,
         fields = document.read_fields(document_text)
         out.append(r["handoff"].format(
             mode=mode, lines=lines or len(document_text.splitlines()),
-            age=_age(fields.get("date", ""), s),
+            age=age(fields.get("date", ""), s),
             extra=r["stale"] if stale else ""))
         if max_lines > 0:
             sections = document.read_sections(document_text, s["context_section"])
@@ -352,7 +388,7 @@ def receipt(document_text="", mode="", strings=None, cards=(), stale=False,
         for name, card in zip(names[:max_lines], cards):
             out.append(r["project_line"].format(
                 name=_clip(name).ljust(width), mode=card.mode.ljust(8),
-                age=_age(card.date, s)))
+                age=age(card.date, s)))
         if len(cards) > max_lines:
             # Saying nothing here reads as "that is all of them", which is the
             # one thing a list of what exists must never get wrong.
