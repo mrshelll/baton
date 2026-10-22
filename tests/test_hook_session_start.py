@@ -148,6 +148,80 @@ class TestDeliveryRegister(Base):
         self.assertNotIn("already been delivered", self.context(self.start()[1]))
 
 
+class TestAfterACompaction(Base):
+    """The SessionStart of `compact` runs before -- or alongside -- the PostCompact,
+    so it decides by the note this session's PreCompact left: the summary carries
+    a newer handoff than the one on disk, and reinjecting the old one would put
+    yesterday on top of today."""
+
+    def log(self):
+        log = storage.Paths(self.project).log
+        return [json.loads(l) for l in log.read_text(encoding="utf-8").splitlines() if l]
+
+    def test_a_block_asked_by_this_session_is_not_reinjected(self):
+        self.write_handoff()
+        storage.note_compact_request(storage.Paths(self.project), "test-session")
+        rc, out, err = self.start(source="compact")
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(out)
+        self.assertEqual(self.log()[-1]["result"],
+                         "silent: handoff travels in the compaction summary")
+
+    def test_a_note_from_another_session_injects_as_today(self):
+        self.write_handoff()
+        storage.note_compact_request(storage.Paths(self.project), "another-session")
+        _, out, _ = self.start(source="compact")
+        self.assertIn("this is where we are", self.context(out))
+
+    def test_without_a_note_it_injects_as_today(self):
+        self.write_handoff()
+        _, out, _ = self.start(source="compact")
+        self.assertIn("this is where we are", self.context(out))
+
+    def test_the_note_only_silences_a_compaction(self):
+        # A /clear right after is a new session: it needs the handoff on disk,
+        # which by then is the one the compaction wrote.
+        self.write_handoff()
+        storage.note_compact_request(storage.Paths(self.project), "test-session")
+        _, out, _ = self.start(source="clear")
+        self.assertIn("this is where we are", self.context(out))
+
+
+class TestWithTheMod(Base):
+    """With baton's mod active the panel shows what the receipt showed: the
+    handoff still goes to the model, the receipt does not go to the screen."""
+
+    def test_the_mod_signal_drops_the_receipt_and_keeps_the_handoff(self):
+        self.write_handoff()
+        rc, out, err = self.start(source="clear", baton_mod=True)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("this is where we are", self.context(out))
+        self.assertNotIn("systemMessage", out)
+
+    def test_display_panel_drops_the_receipt_too(self):
+        self.write_handoff()
+        claude = self.project / ".claude"
+        claude.mkdir(exist_ok=True)
+        (claude / "baton.json").write_text(json.dumps({"display": "panel"}), encoding="utf-8")
+        _, out, _ = self.start(source="clear")
+        self.assertIn("this is where we are", self.context(out))
+        self.assertNotIn("systemMessage", out)
+
+    def test_an_index_alone_drops_the_receipt_too(self):
+        sub = self.project / "radar"
+        storage.Paths(sub).document.parent.mkdir(parents=True)
+        storage.Paths(sub).document.write_text(
+            "---\nbaton: 1\nmode: memory\n---\n## State\nx\n", encoding="utf-8")
+        _, out, _ = self.start(source="clear", baton_mod=True)
+        self.assertIn("radar", self.context(out))
+        self.assertNotIn("systemMessage", out)
+
+    def test_without_the_mod_the_receipt_stays(self):
+        self.write_handoff()
+        _, out, _ = self.start(source="clear", baton_mod="true")   # a near-miss is not the mod
+        self.assertIn("systemMessage", out)
+
+
 class TestStartFilter(Base):
     def test_honours_inject_on(self):
         self.write_handoff()

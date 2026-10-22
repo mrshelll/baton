@@ -76,8 +76,21 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
     source = entry.get("source") or "startup"
     if source not in cfg["inject_on"]:
         return {}, f"silent: '{source}' is not in inject_on"
+    if source == "compact":
+        # This runs before -- or alongside -- the PostCompact, so it cannot know
+        # whether the block came out. It knows whether this session asked for
+        # one, where the PreCompact asked: then the summary carries a handoff
+        # newer than the one on disk. If the block never comes, the summary is
+        # still there and the flag asks for a handoff at the next Stop.
+        dest, _ = _compaction_destination(entry, paths, root, found)
+        if dest is not None and storage.read_compact_request(
+                dest.paths, entry.get("session_id") or "") is not None:
+            return {}, "silent: handoff travels in the compaction summary"
 
     strings = output.load_strings(cfg["language"])
+    # With the mod, the panel shows what the receipt showed; the handoff still
+    # goes to the model.
+    receipt = cfg["receipt"] and not _mod_active(entry, cfg)
 
     index = ""
     cards = []
@@ -89,7 +102,7 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
         # Only the index: this root holds projects but has no handoff of its own.
         payload = {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                           "additionalContext": index}}
-        if cfg["receipt"]:
+        if receipt:
             payload["systemMessage"] = output.receipt(
                 strings=strings, cards=cards, max_lines=cfg["receipt_lines"])
         return payload, f"index injected: {len(found.projects)} projects"
@@ -117,7 +130,7 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
 
     payload = {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                       "additionalContext": context}}
-    if cfg["receipt"]:
+    if receipt:
         # The receipt is the cheapest way to turn a silent failure into a
         # visible one: if this line is missing, the hook did not fire. It also
         # carries what the session left behind, because this is the ONLY thing
@@ -316,12 +329,17 @@ def _measure(entry: dict, cfg, root, state: dict) -> tuple[window.Reading, dict]
 
 
 def _window_request(target: storage.Paths, label: str, cfg, reading,
-                    state: dict) -> tuple[dict, str]:
+                    state: dict, mod: bool = False) -> tuple[dict, str]:
     """Ask for the handoff if the window crossed a threshold not yet asked.
 
     A threshold is marked as asked -- in `state`, which the caller saves -- ONLY
     when the request goes out. Held back by the cooldown, it is tried again at
-    the next turn: postponed, not lost."""
+    the next turn: postponed, not lost.
+
+    With the mod (`mod`), the panel announces it instead: the threshold is
+    marked, so the panel can read it from `window.json`, and nothing blocks.
+    Neither the cooldown nor its stamp apply -- they protect the person from
+    interruptions, and nobody is interrupted."""
     if not reading.known:
         return {}, "silent: context unknown"
     cw = cfg["context_window"]
@@ -331,11 +349,16 @@ def _window_request(target: storage.Paths, label: str, cfg, reading,
     tier = window.tier_reached(reading, cw["thresholds"], state["fired"], cw["min_tokens"])
     if tier is None:
         return {}, f"silent: {measured}"
+    reached = sorted(set(state["fired"]) | {t for t in cw["thresholds"] if t <= tier})
+    if mod:
+        state["fired"] = reached
+        return {}, (f"threshold {tier} announced by the panel"
+                    f"{f' for {label}' if label else ''}; {measured}")
     if not storage.cooldown_clear(target, cfg["cooldown_minutes"]):
         return {}, f"silent: {measured}, {tier}% waits for the cooldown"
 
     again = bool(state["fired"])
-    state["fired"] = sorted(set(state["fired"]) | {t for t in cw["thresholds"] if t <= tier})
+    state["fired"] = reached
     storage.note_request(target)
 
     strings = output.load_strings(cfg["language"])["auto_handoff"]
@@ -365,6 +388,8 @@ def _stop(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, st
        harness compacts and decides by itself what survives. The thresholds stay
        at or below 95% on purpose: drafting costs a few thousand tokens, and at
        the very edge that alone could trigger the compaction being pre-empted.
+       With baton's mod active the panel announces it instead, and this
+       reason only records the threshold.
 
     The compaction wins a tie: its summary is the better material, and the
     threshold is not consumed, so it stays available. Both reasons share one
@@ -411,7 +436,8 @@ def _stop(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[dict, st
         }, f"handoff requested after compaction{f' for {label}' if label else ''}; "
            f"{_describe(reading)}")
 
-    payload, result = _window_request(target, label, cfg, reading, state)
+    payload, result = _window_request(target, label, cfg, reading, state,
+                                      mod=_mod_active(entry, cfg))
     storage.save_window(paths, state)
     return payload, result
 

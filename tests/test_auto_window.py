@@ -177,6 +177,58 @@ class TestWhatDoesNotCount(Base):
         self.assertIn("30%", self.log()[-1]["result"])
 
 
+class TestWithTheMod(Base):
+    """With baton's mod active the panel announces the threshold: Stop measures
+    and records it, so the panel can read it, but interrupts nobody."""
+
+    def at_1m(self, percent):
+        # sonnet-4-6 with the [1m] suffix: a 1000k window, 1% is 10,000 tokens.
+        return str(self.transcript([self.identity(f"{MODEL}[1m]"),
+                                    self.answer(percent * 10_000, model=MODEL)]))
+
+    def test_the_threshold_is_recorded_and_nothing_blocks(self):
+        rc, out, err = self.stop(transcript=self.at_1m(70), baton_mod=True)
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(out)
+        self.assertEqual(self.state()["fired"], [65])
+        self.assertEqual(self.state()["last"]["budget"], 1_000_000)
+        self.assertIn("threshold 65 announced by the panel", self.log()[-1]["result"])
+
+    def test_nobody_was_interrupted_so_the_cooldown_is_not_stamped(self):
+        self.stop(transcript=self.at_1m(70), baton_mod=True)
+        self.assertTrue(storage.cooldown_clear(self.p, 30))
+        # Without the mod, the next threshold still asks, at once.
+        _, out, _ = self.stop(transcript=self.at_1m(90))
+        self.assertEqual(out["decision"], "block")
+
+    def test_display_panel_does_the_same(self):
+        (self.project / ".claude").mkdir(exist_ok=True)
+        (self.project / ".claude" / "baton.json").write_text(
+            json.dumps({"display": "panel"}), encoding="utf-8")
+        _, out, _ = self.stop(transcript=self.at_1m(70))
+        self.assertIsNone(out)
+        self.assertEqual(self.state()["fired"], [65])
+
+    def test_an_announced_threshold_is_not_announced_again(self):
+        self.stop(transcript=self.at_1m(70), baton_mod=True)
+        self.stop(transcript=self.at_1m(72), baton_mod=True)
+        self.assertNotIn("announced", self.log()[-1]["result"])
+        self.assertEqual(self.state()["fired"], [65])
+
+    def test_without_the_mod_it_blocks_as_today(self):
+        _, out, _ = self.stop(transcript=self.at_1m(70))
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("70%", out["reason"])
+        self.assertIn("1000k", out["reason"])
+
+    def test_a_pending_compaction_still_asks_with_the_mod(self):
+        # The fallback after a compaction whose block did not come out is not a
+        # threshold: the panel does not replace it.
+        self.compact()
+        _, out, _ = self.stop(transcript=self.at_1m(20), baton_mod=True)
+        self.assertIn("just been compacted", out["reason"])
+
+
 class TestWithTheCompaction(Base):
     def test_a_pending_compaction_wins_and_the_threshold_waits(self):
         self.configure(cooldown=0)

@@ -399,6 +399,15 @@ class TestPostCompactWritesTheBlock(BlockCase):
         self.assertFalse(self.armed(radar))
         self.assertIs(self.request(radar)["written"], True)
 
+    def test_the_stop_after_a_written_block_stays_silent(self):
+        # Nothing was armed, so nothing is asked: the handoff is already written.
+        self.note()
+        self.post()
+        rc, out, err = self.stop()
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(out)
+        self.assertFalse(self.armed())
+
     # -- the mod speaks instead ------------------------------------------------
     def test_with_the_mod_it_writes_and_prints_nothing(self):
         self.note()
