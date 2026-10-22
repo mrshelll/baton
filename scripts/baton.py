@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import budget, config, document, gitinfo, output, projects, storage  # noqa: E402
+from lib import budget, config, document, gitinfo, handoff, output, projects, storage  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
@@ -228,23 +228,13 @@ def cmd_write(args) -> int:
         print(strings["cli"]["no_draft"].format(path=draft_path), file=sys.stderr)
         return INVALID
 
-    parsed = document.validate_draft(raw, mode=args.mode, strings=strings)
+    built = handoff.build(raw, args.mode, root, cfg, strings)
+    final, parsed, verdict = built.final, built.parsed, built.verdict
     if not parsed.valid:
         print(strings["cli"]["invalid_draft"], file=sys.stderr)
         for e in parsed.errors:
             print(f"  - {e}", file=sys.stderr)
         return INVALID
-
-    snap = gitinfo.snapshot(root)
-
-    def assemble(body):
-        return document.compose(
-            body=body, mode=args.mode, date=gitinfo.now_iso(),
-            branch=snap.branch, commit=snap.commit,
-            context=gitinfo.context_block(snap, strings), strings=strings)
-
-    final = assemble(parsed.body)
-    verdict = budget.evaluate(final, cfg["limits"])
 
     if not verdict.fits:
         fingerprint = document.fingerprint(final, strings["context_section"])
@@ -254,6 +244,7 @@ def cmd_write(args) -> int:
             print(budget.report(verdict, parsed.body, attempt, MAX_ATTEMPTS, strings,
                                 str(paths.document)), file=sys.stderr)
             return OVER_BUDGET
+        assemble = handoff.assembler(args.mode, root, strings)
         final = _minimal_escape(parsed, strings, cfg, assemble, attempt)
 
     try:
