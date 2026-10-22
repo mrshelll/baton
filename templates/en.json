@@ -131,6 +131,7 @@
     "hint_open": "click → panel",
     "action_new_session": "New session",
     "action_write": "Write handoff",
+    "actionFailed": "baton could not do that; try again.",
     "title": "baton · {project}",
     "breadcrumb": "baton › {project}",
     "back": "Back",

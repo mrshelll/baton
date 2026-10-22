@@ -132,6 +132,7 @@
     "hint_open": "clic → panel",
     "action_new_session": "Sesión nueva",
     "action_write": "Escribir traspaso",
+    "actionFailed": "baton no pudo hacerlo; inténtalo de nuevo.",
     "title": "baton · {project}",
     "breadcrumb": "baton › {project}",
     "back": "Volver",

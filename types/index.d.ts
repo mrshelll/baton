@@ -61,6 +61,8 @@ export type PanelStrings = {
   hint_open: string
   action_new_session: string
   action_write: string
+  /** The toast when a band or pane action fails. */
+  actionFailed: string
   title: string
   breadcrumb: string
   back: string

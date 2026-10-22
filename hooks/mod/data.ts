@@ -1,4 +1,4 @@
-import { atom, update } from 'claude-code'
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { PanelData, PanelState, PanelStrings } from '../../types'
 
@@ -10,6 +10,11 @@ export const TIMEOUT_MS = 10_000
 /** Where the mod keeps what it loaded: the band and the pane draw from here (`read($, panel)`). */
 export const panel = atom({ plugin: 'baton', key: 'panel' } as const, null as PanelData | null)
 export const loadedAt = atom({ plugin: 'baton', key: 'loadedAt' } as const, 0)
+
+/** The panel last loaded, or null before the first load ends: what the band and the pane draw. */
+export function current($: EngineInterface): Promise<PanelData | null> {
+  return read($, panel)
+}
 
 const STATES: readonly PanelState[] = ['ready', 'threshold', 'error', 'normal', 'none']
 
@@ -29,6 +34,7 @@ export const FALLBACK_STRINGS: PanelStrings = {
   hint_open: 'click → panel',
   action_new_session: 'New session',
   action_write: 'Write handoff',
+  actionFailed: 'baton could not do that; try again.',
   title: 'baton · {project}',
   breadcrumb: 'baton › {project}',
   back: 'Back',
