@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -108,7 +109,7 @@ def _session_start(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple
 
     # With the mod, the panel shows what the receipt showed; the handoff still
     # goes to the model.
-    receipt = cfg["receipt"] and not _mod_active(entry, cfg)
+    receipt = cfg["receipt"] and not (_mod_active(entry, cfg) or _mod_expected(entry, paths))
 
     # On /clear an active project survives only when a compaction asked for it
     # (see `main`), so one here is that one: it is delivered the way `baton.py
@@ -268,13 +269,65 @@ def _pre_compact(entry: dict, paths: storage.Paths, cfg, root, found) -> tuple[s
     return text, f"handoff block requested{dest.label}"
 
 
+#: How long a terminal that showed baton's mod in a project is believed to show
+#: it at the next cold start there (`.baton/local/mod-seen`).
+MOD_SEEN_DAYS = 14
+
+
+def _under_repl() -> bool:
+    """True when this hook runs under the interactive REPL (CLAUDE_CODE_ENTRYPOINT
+    `cli`), the only place a terminal draws baton's mod."""
+    return os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "cli"
+
+
+def _mod_confirmed(entry: dict) -> bool:
+    """True when the mod itself says it draws this session.
+
+    It marks the classic hook payloads with `baton_mod: true`; and, since a
+    plugin seated above it (a Team org's built-in) may send an event on past its
+    hooks, it also sets `BATON_MOD=terminal` for the process once a terminal
+    draws it. The variable counts under the REPL alone (CLAUDE_CODE_ENTRYPOINT
+    `cli`): a `claude -p` started from that terminal inherits it and draws
+    nothing. Strictly those values: a near-miss is not the mod."""
+    return entry.get("baton_mod") is True or (
+        _under_repl() and os.environ.get("BATON_MOD") == "terminal")
+
+
 def _mod_active(entry: dict, cfg) -> bool:
     """True when baton's mod tells the person what happened, not the hooks.
 
-    The mod marks every classic hook payload with `baton_mod: true`; `display:
-    "panel"` says the same from the config. Strictly `True`: a near-miss is not
-    the mod, and the hooks' own line is the safe default."""
-    return entry.get("baton_mod") is True or cfg.get("display") == "panel"
+    The mod says so itself (`_mod_confirmed`), or `display: "panel"` says it
+    from the config. Anything else keeps the hooks' own line, the safe default."""
+    return _mod_confirmed(entry) or cfg.get("display") == "panel"
+
+
+def _mod_expected(entry: dict, paths: storage.Paths) -> bool:
+    """True when a process's first SessionStart may trust the mod to show the
+    receipt's content although it could not say so yet.
+
+    That one comes before the mod can set its variable, and a plugin above may
+    skip the hook that marks it. Under the REPL, a project where the mod was
+    confirmed within MOD_SEEN_DAYS is trusted there, and only there: by any later
+    event the mod has told the process, so its silence then means it does not
+    draw, and a threshold or a «ready» line must not be lost to an old trace."""
+    return ((entry.get("source") or "startup") in ("startup", "resume")
+            and _under_repl() and storage.mod_seen(paths, MOD_SEEN_DAYS))
+
+
+def _export_session_root() -> None:
+    """Hands the session's folder to the Bash tool, where the skill runs
+    `baton.py`: Claude Code gives it to the hooks (CLAUDE_PROJECT_DIR) and not
+    to Bash, whose `cd` may have moved into a repo of its own. A SessionStart
+    hook's CLAUDE_ENV_FILE is sourced before each Bash command. Never raises."""
+    env_file = os.environ.get("CLAUDE_ENV_FILE")
+    started = os.environ.get("CLAUDE_PROJECT_DIR")
+    if not (env_file and started):
+        return
+    try:
+        with open(env_file, "a", encoding="utf-8") as f:
+            f.write(f"export BATON_PROJECT_DIR={shlex.quote(started)}\n")
+    except (OSError, ValueError):  # ValueError: a path the file cannot encode
+        pass
 
 
 def _write_compaction_block(entry: dict, dest) -> tuple[bool, str]:
@@ -524,7 +577,7 @@ def _tool_batch(entry: dict) -> dict:
     """
     if entry.get("agent_id"):
         return {}
-    root = storage.project_root(entry.get("cwd") or os.getcwd())
+    root = storage.session_root(entry.get("cwd") or os.getcwd())
     cfg = config.load(root)
     cw = cfg["context_window"]
     if not (cw["enabled"] and cw["watch_at"]):
@@ -569,9 +622,13 @@ def main() -> int:
             # An event we do not know is not our error: stay quiet.
             return 0
 
+        if event == "session-start":
+            _export_session_root()
+
         # Never from os.getcwd(): a hook's working directory is not reliable.
-        # Never from CLAUDE_SESSION_ID either: it is not guaranteed.
-        root = storage.project_root(entry.get("cwd") or os.getcwd())
+        # Never from CLAUDE_SESSION_ID either: it is not guaranteed. And from
+        # where the session started, not where its shell went (`session_root`).
+        root = storage.session_root(entry.get("cwd") or os.getcwd())
 
         # Resolved before the config on purpose, so the log still gets written
         # if `config.load` blows up on a corrupt file.
@@ -599,6 +656,8 @@ def main() -> int:
             storage.log_event(paths, event=event, result="silent: project not enabled")
             return 0
 
+        if _mod_confirmed(entry):
+            storage.note_mod_seen(paths)
         payload, result = handler(entry, paths, cfg, root, found)
         # `post-compact` answers in plain text too: Claude Code shows its stdout
         # raw, never parsed as JSON.

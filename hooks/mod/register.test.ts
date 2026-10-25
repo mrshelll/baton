@@ -6,6 +6,8 @@ import { SAMPLE } from './testdata'
 
 const SESSION = 'sesión 1'
 const CWD = '/Users/someone/Mis proyectos/proyecto uno'
+/** Where the session started: its shell then went into CWD. */
+const ROOT = '/Users/someone/Mis proyectos'
 
 /** A promise and the function that settles it. */
 function deferred<T>() {
@@ -25,8 +27,11 @@ function world(
   on: On,
   surfaces: readonly RenderSurface[] | 'unreadable' | (() => readonly RenderSurface[]) = ['terminal'],
   stdout: (run: number) => Promise<string> = async () => SAMPLE,
+  opts: { root?: string | null } = {},
 ) {
   const runs: { argv: readonly string[] }[] = []
+  /** What the mod set in the environment, in order. */
+  const sets: { name: string; value?: string }[] = []
   const state = new Map<string, unknown>()
   /** The `state` of every panel written, in order. */
   const panels: string[] = []
@@ -36,6 +41,12 @@ function world(
   on('session.surfaces', () => (surfaces === 'unreadable' ? { deny: 'no surfaces here' } : { value: typeof surfaces === 'function' ? surfaces() : surfaces }))
   on('session.id', () => ({ value: SESSION }))
   on('session.cwd', () => ({ value: CWD }))
+  const root = opts.root === undefined ? ROOT : opts.root
+  on('session.root', () => (root === null ? { deny: 'no root here' } : { value: root }))
+  on('env.set', (_$, e) => {
+    sets.push({ name: e.name, value: e.value })
+    return { value: {} }
+  })
   on('process.run', async (_$, e) => {
     runs.push({ argv: e.argv })
     const out = await stdout(runs.length)
@@ -57,7 +68,7 @@ function world(
     else waiting.push({ n, settle: d.settle })
     return d.promise
   }
-  return { runs, state, panels, loads, clock }
+  return { runs, state, panels, loads, clock, sets }
 }
 
 /** The classic events the mod marks, each raised as the engine raises it. */
@@ -251,7 +262,7 @@ test('session.start loads the panel for this session and folder into the state',
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await w.loads(1)
-  expect(w.runs[0]?.argv.slice(2)).toEqual(['panel', '--json', '--session', SESSION, '--cwd', CWD])
+  expect(w.runs[0]?.argv.slice(2)).toEqual(['panel', '--json', '--session', SESSION, '--cwd', CWD, '--root', ROOT])
   expect((w.state.get('panel') as { state?: string }).state).toBe('normal')
   expect(w.state.get('loadedAt')).toBe(5_000)
 })
@@ -335,4 +346,53 @@ test('a load that ends after a newer one has written leaves the newer one standi
   await turn('t3')
   await w.loads(2)
   expect(w.panels).toEqual(['ready', 'none'])
+})
+
+// -- where the session stands, and what the Python hooks are told ------------
+
+test('the panel is the folder the session started in (--root), not where its shell went (--cwd)', async ($, on) => {
+  const w = world(on)
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await w.loads(1)
+  const argv = w.runs[0]?.argv ?? []
+  expect(argv[argv.indexOf('--cwd') + 1]).toBe(CWD)
+  expect(argv[argv.indexOf('--root') + 1]).toBe(ROOT)
+})
+
+test('an engine that will not say where the session started: no --root, the shell\'s folder as before', async ($, on) => {
+  const w = world(on, ['terminal'], async () => SAMPLE, { root: null })
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await w.loads(1)
+  expect(w.runs[0]?.argv.slice(2)).toEqual(['panel', '--json', '--session', SESSION, '--cwd', CWD])
+})
+
+test('drawn on the terminal, the process is told once: BATON_MOD=terminal, for hooks a plugin above may skip', async ($, on) => {
+  const w = world(on)
+  stdinOf(on)
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.classic.SessionStart({ source: 'clear' })
+  await $.classic.Stop({ stop_hook_active: false })
+  expect(w.sets).toEqual([{ name: 'BATON_MOD', value: 'terminal' }])
+})
+
+test('a SessionStart that finds the terminal tells the process before the hooks beneath run', async ($, on) => {
+  const w = world(on)
+  let setBefore = false
+  on('classic.SessionStart', () => { setBefore = w.sets.length > 0; return {} })
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(setBefore).toBe(true)
+})
+
+test('where no terminal draws, the process is never told', async ($, on) => {
+  mock.env(on, { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' })
+  const w = world(on, [])
+  stdinOf(on)
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  await $.classic.SessionStart({ source: 'startup' })
+  await $.session.start({ cwd: CWD, surface: null, isInteractive: false })
+  await $.classic.Stop({ stop_hook_active: false })
+  expect(w.sets).toEqual([])
 })

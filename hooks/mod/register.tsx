@@ -73,13 +73,37 @@ async function isDrawnAtStart($: EngineInterface, signal?: AbortSignal): Promise
   }
 }
 
+/** Whether this load has told the process (`tell`): once is enough. */
+const told = { done: false }
+
+/**
+ * Tells baton's Python hooks, for the rest of the process, that the mod draws
+ * it: `BATON_MOD=terminal` in the environment every hook started after
+ * inherits. The mark on the payload (`marked`) says the same, but a plugin
+ * seated above this one (a Team org's built-in, `cc-plugin-sec-default`, seen
+ * on 2.1.309) may send a classic event on past the mod's hooks, and the
+ * payload then reaches Python unmarked. Once per load; never throws.
+ * `_mod_confirmed` in hooks/baton_hook.py reads it.
+ */
+async function tell($: EngineInterface): Promise<void> {
+  if (told.done) return
+  told.done = true
+  try {
+    await $.env.set('BATON_MOD', 'terminal')
+  } catch {
+    // The mark on each payload still says it.
+  }
+}
+
 /**
  * The event as baton's Python hooks should receive it on stdin: marked
  * `baton_mod: true` where the mod draws (spike S3: the field reaches them),
  * unchanged elsewhere. `_mod_active` in hooks/baton_hook.py reads the mark.
  */
 async function marked<E extends object>($: EngineInterface, e: E, drawn: Promise<boolean> = isDrawn($)): Promise<E> {
-  return (await drawn) ? { ...e, baton_mod: true } : e
+  if (!(await drawn)) return e
+  await tell($)
+  return { ...e, baton_mod: true }
 }
 
 /**
@@ -170,6 +194,7 @@ export const register: Register = on => {
   // called again).
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.surface !== 'terminal') return next(e)
+    void tell($)
     const below = await next(e)
     if (e.props.hasSurvey) return below
     try {
@@ -207,6 +232,7 @@ export const register: Register = on => {
   // terminal stops at its next look (`boot`).
   on('session.start', async ($, e, next) => {
     boot.started = true
+    if (await isDrawn($)) await tell($)
     const started = await next(e)
     void refresh($)
     return started

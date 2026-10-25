@@ -609,12 +609,15 @@ class TestModActive(unittest.TestCase):
         return hook._mod_active(entry, {"display": display})
 
     def test_the_payload_signal_or_the_panel_display(self):
-        self.assertTrue(self.mod_active({"baton_mod": True}))
-        self.assertTrue(self.mod_active({}, display="panel"))
-        self.assertFalse(self.mod_active({}))
-        for fake in ("true", 1, "yes", None):
-            with self.subTest(fake=fake):
-                self.assertFalse(self.mod_active({"baton_mod": fake}))
+        from unittest import mock
+        from tests.helpers import clean_env
+        with mock.patch.dict("os.environ", clean_env(), clear=True):
+            self.assertTrue(self.mod_active({"baton_mod": True}))
+            self.assertTrue(self.mod_active({}, display="panel"))
+            self.assertFalse(self.mod_active({}))
+            for fake in ("true", 1, "yes", None):
+                with self.subTest(fake=fake):
+                    self.assertFalse(self.mod_active({"baton_mod": fake}))
 
 
 class TestCompactRequest(BaseCase):

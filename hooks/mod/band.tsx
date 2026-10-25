@@ -3,9 +3,10 @@ import type { PanelData, PanelStrings } from '../../types'
 
 /**
  * The band: baton's section above the prompt, always drawn on the terminal,
- * saying where the handoff stands, with the action of the moment and a way into
- * the panel. Every word of the status comes from `data.strings` (the project's
- * language); this file only picks, fills and fits them.
+ * saying where the handoff stands, with its two actions (the one of the moment
+ * first) and a way into the panel. Every word of the status comes from
+ * `data.strings` (the project's language); this file only picks, fills and
+ * fits them.
  *
  * The section sits in a frame shared with agents-panel (the spec's «Adenda
  * (2026-10-22)»): each mod draws a Box keyed `<mod>:section`, and whichever hook
@@ -39,8 +40,11 @@ export type BandModel = {
   text: string
   /** Its color; the glyph in the text says the same (never color alone). */
   tone: 'success' | 'warning' | undefined
-  /** The button of the moment, drawn only when it fits whole. */
-  action: { kind: BandAction; label: string } | null
+  /**
+   * The buttons that fit whole, in order: the moment's own first, `primary`,
+   * then the other; with a handoff and nothing of the moment, both plain.
+   */
+  actions: { kind: BandAction; label: string; primary: boolean }[]
   /** `clic → panel`, dim, only when it fits after the rest. */
   hint: string | null
 }
@@ -52,8 +56,11 @@ export type BandActions = {
   openPanel: () => void
 }
 
-/** A face before fitting: the words and what goes with them. */
-type Face = { text: string; tone: BandModel['tone']; action: BandAction | null; hint: boolean }
+/**
+ * A face before fitting: the words and what goes with them. `actions` in the
+ * order drawn; `primary` when the first is the action of the moment.
+ */
+type Face = { text: string; tone: BandModel['tone']; actions: readonly BandAction[]; primary: boolean; hint: boolean }
 
 /** Cells a text takes, counted by code point: every glyph the strings use is one cell. */
 export function width(text: string): number {
@@ -94,49 +101,50 @@ function face(data: PanelData): Face {
   // A reading with no percent still crossed its threshold, which is a percent too.
   const percent = data.threshold?.percent ?? data.threshold?.tier
   if (data.state === 'ready' && h) {
-    return { text: fill(s.band_ready, { age: h.age }), tone: 'success', action: 'newSession', hint: true }
+    return { text: fill(s.band_ready, { age: h.age }), tone: 'success', actions: ['newSession', 'writeHandoff'], primary: true, hint: true }
   }
   if (data.state === 'threshold' && typeof percent === 'number') {
-    return { text: fill(s.band_threshold, { percent }), tone: 'warning', action: 'writeHandoff', hint: true }
+    return { text: fill(s.band_threshold, { percent }), tone: 'warning', actions: ['writeHandoff', 'newSession'], primary: true, hint: true }
   }
   if (data.state === 'error') {
-    return { text: s.band_error, tone: 'warning', action: null, hint: true }
+    return { text: s.band_error, tone: 'warning', actions: [], primary: false, hint: true }
   }
   if (h && data.state !== 'none') {
+    // A handoff stands and nothing presses: both actions, neither of the moment.
+    const both = { actions: ['writeHandoff', 'newSession'] as const, primary: false, hint: true }
     const open = pending(data)
     if (open > 0) {
       const template = open === 1 ? s.band_pending_one : s.band_pending
-      return { text: fill(template, { n: open, age: h.age }), tone: 'warning', action: null, hint: true }
+      return { text: fill(template, { n: open, age: h.age }), tone: 'warning', ...both }
     }
     const mode = h.mode === 'continue' ? s.mode_continue : s.mode_memory
-    return { text: fill(s.band_normal, { age: h.age, mode }), tone: undefined, action: null, hint: true }
+    return { text: fill(s.band_normal, { age: h.age, mode }), tone: undefined, ...both }
   }
   // Nothing written yet: writing is the thing to do (with no project, baton asks where).
-  return { text: data.project ? s.band_none : s.band_no_project, tone: undefined, action: 'writeHandoff', hint: false }
+  return { text: data.project ? s.band_none : s.band_no_project, tone: undefined, actions: ['writeHandoff'], primary: true, hint: false }
 }
 
 /**
  * The band's line for `data`, fitted to `columns`: the line first, whole when
- * it fits and cut with `…` when not; then the action's button if it fits whole
- * beside it; then the hint if there is still room. Pure.
+ * it fits and cut with `…` when not; then each button, in order, while it fits
+ * whole beside what is already there; then the hint if there is still room. Pure.
  */
 export function bandLine(data: PanelData, columns: number): BandModel {
   const f = face(data)
   const text = oneLine(f.text)
   const room = Math.floor(columns)
-  if (width(text) > room) return { text: cut(text, room), tone: f.tone, action: null, hint: null }
+  if (width(text) > room) return { text: cut(text, room), tone: f.tone, actions: [], hint: null }
   let used = width(text)
-  let action: BandModel['action'] = null
-  if (f.action !== null) {
-    const label = oneLine(f.action === 'newSession' ? data.strings.action_new_session : data.strings.action_write)
+  const actions: BandModel['actions'] = []
+  for (const [i, kind] of f.actions.entries()) {
+    const label = oneLine(kind === 'newSession' ? data.strings.action_new_session : data.strings.action_write)
     const needs = GAP + BUTTON_CHROME + width(label)
-    if (used + needs <= room) {
-      action = { kind: f.action, label }
-      used += needs
-    }
+    if (used + needs > room) break
+    actions.push({ kind, label, primary: f.primary && i === 0 })
+    used += needs
   }
   const hint = oneLine(data.strings.hint_open)
-  return { text, tone: f.tone, action, hint: f.hint && used + GAP + width(hint) <= room ? hint : null }
+  return { text, tone: f.tone, actions, hint: f.hint && used + GAP + width(hint) <= room ? hint : null }
 }
 
 /** The Button keys, by action: what `ui.press` names. */
@@ -145,11 +153,10 @@ const ACTION_KEYS: Record<BandAction, string> = { newSession: 'baton:new-session
 /**
  * baton's section: a borderless column keyed `baton:section`, its title first
  * (bold, `claude`), then the status row. The line is a Button that opens the
- * panel; the action's own Button follows it; the hint sits at the right.
+ * panel; the actions' own Buttons follow it; the hint sits at the right.
  */
 export function section(t: ElementTable<'terminal'>, m: BandModel, act: BandActions): RenderElement {
   const { Box, Button, Text } = t
-  const action = m.action
   return (
     <Box key={SECTION_KEY} flexDirection="column">
       <Text wrap="truncate-end" bold color="claude">{TITLE}</Text>
@@ -158,14 +165,14 @@ export function section(t: ElementTable<'terminal'>, m: BandModel, act: BandActi
           <Button key="baton:open" label={m.text} plain onPress={() => act.openPanel()}>
             <Text wrap="truncate-end" color={m.tone} hover={{ scope: 'baton:open', underline: true }}>{m.text}</Text>
           </Button>
-          {action && (
+          {m.actions.map(action => (
             <Button
               key={ACTION_KEYS[action.kind]}
               label={action.label}
-              variant="primary"
+              {...(action.primary ? { variant: 'primary' as const } : {})}
               onPress={() => (action.kind === 'newSession' ? act.newSession() : act.writeHandoff())}
             />
-          )}
+          ))}
         </Box>
         {m.hint !== null && <Text wrap="truncate-end" dimColor>{m.hint}</Text>}
       </Box>

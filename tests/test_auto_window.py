@@ -212,6 +212,28 @@ class TestWithTheMod(Base):
         self.assertEqual(self.state()["last"]["budget"], 1_000_000)
         self.assertIn("threshold 65 announced by the panel", self.log()[-1]["result"])
 
+    def test_the_mod_s_environment_counts_when_its_hook_was_skipped(self):
+        # The payload comes unmarked: a plugin above sent the Stop on past the mod.
+        payload = self.payload("Stop", stop_hook_active=False, session_id="s1")
+        payload["transcript_path"] = self.at_1m(70)
+        rc, out, err = self.run_hook("stop", payload, env={
+            **self.env(), "CLAUDE_CODE_ENTRYPOINT": "cli", "BATON_MOD": "terminal"})
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(out)
+        self.assertIn("threshold 65 announced by the panel", self.log()[-1]["result"])
+
+    def test_a_trace_of_the_mod_alone_does_not_silence_a_threshold(self):
+        # Only the startup receipt trusts the trace: a process with no mod
+        # (it did not load) must still be told the context is filling up.
+        paths = storage.Paths(self.project)
+        paths.local.mkdir(parents=True, exist_ok=True)
+        paths.mod_seen.touch()
+        payload = self.payload("Stop", stop_hook_active=False, session_id="s1")
+        payload["transcript_path"] = self.at_1m(70)
+        rc, out, err = self.run_hook("stop", payload, env={**self.env(), "CLAUDE_CODE_ENTRYPOINT": "cli"})
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out["decision"], "block")
+
     def test_nobody_was_interrupted_so_the_cooldown_is_not_stamped(self):
         self.stop(transcript=self.at_1m(70), baton_mod=True)
         self.assertTrue(storage.cooldown_clear(self.p, 30))

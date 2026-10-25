@@ -4,7 +4,7 @@
 
 *[English](README.md) · **Español***
 
-[![tests](https://img.shields.io/badge/tests-596-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-628-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requisitos)
 [![licencia](https://img.shields.io/badge/licencia-MIT-lightgrey)](LICENSE)
 
@@ -378,17 +378,19 @@ un panel con el traspaso completo.
 
 Bajo el título `baton`, una línea dice cómo está el traspaso:
 
-| Cuándo | La línea dice | Botón |
+| Cuándo | La línea dice | Botones |
 |---|---|---|
-| Normal | `traspaso hace 2 h · memoria` | |
-| Tras escribirlo una compactación | `✓ traspaso listo · recién` | `[ Sesión nueva ]` |
-| Se cruzó un umbral | `⚠ contexto al 65 %` | `[ Escribir traspaso ]` |
-| El traspaso tiene bloqueos | `⚠ 2 pendientes · hace 3 h` | |
-| Aún no hay traspaso | `sin traspaso en este proyecto` | `[ Escribir traspaso ]` |
+| Normal | `traspaso hace 2 h · memoria` | `[ Escribir traspaso ]` `[ Sesión nueva ]` |
+| Tras escribirlo una compactación | `✓ traspaso listo · recién` | **`[ Sesión nueva ]`** `[ Escribir traspaso ]` |
+| Se cruzó un umbral | `⚠ contexto al 65 %` | **`[ Escribir traspaso ]`** `[ Sesión nueva ]` |
+| El traspaso tiene bloqueos | `⚠ 2 pendientes · hace 3 h` | `[ Escribir traspaso ]` `[ Sesión nueva ]` |
+| Aún no hay traspaso | `sin traspaso en este proyecto` | **`[ Escribir traspaso ]`** |
 | No se puede leer el traspaso | `⚠ no se pudo leer el traspaso` | |
 
-En una terminal estrecha la línea conserva primero sus palabras: se va la pista,
-luego el botón, y solo entonces se corta la línea con `…`.
+Donde hay traspaso están los dos botones, así que ninguno necesita el panel; el
+del momento, en negrita arriba, va primero y se dibuja como el principal. En una
+terminal estrecha la línea conserva primero sus palabras: se va la pista, luego
+el segundo botón, luego el primero, y solo entonces se corta la línea con `…`.
 
 Un clic en la línea abre el panel; `clic → panel` va a la derecha cuando cabe.
 `[ Sesión nueva ]` ejecuta `/clear` por ti, como si lo hubieras escrito.
@@ -660,6 +662,13 @@ disco no es prueba de que este traspaso sea suyo.
 En las dos, el modelo te pregunta en una línea y pasa él la bandera. Tú contestas
 con palabras.
 
+La raíz se busca desde la carpeta donde arrancó la sesión, no desde donde fue su
+shell: un `cd` a una subcarpeta que es un repo propio (su `.git` marca una raíz)
+no lleva a baton allí, salvo que esa carpeta tenga traspaso propio — un proyecto
+bajo la raíz, un repo que usa baton por su cuenta. Los hooks la leen de Claude Code (`CLAUDE_PROJECT_DIR`), el
+mod de la sesión, y `/baton` del `BATON_PROJECT_DIR` que el hook de SessionStart
+le pasa a la herramienta Bash.
+
 La activación vive una sesión: un arranque nuevo la limpia, una compactación la
 conserva.
 
@@ -891,7 +900,7 @@ La franja y el panel necesitan un Claude Code que cargue mods (hecho sobre
 ./tests/run.sh
 ```
 
-596 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
+628 tests con `unittest` de la stdlib: **sin Claude Code y sin instalar nada**. Los
 de hooks invocan el script como subproceso con stdin JSON, igual que el harness,
 porque es la única forma de cubrir el contrato real. Los proyectos temporales se
 crean bajo una ruta con espacio y tilde, para que el caso raro sea el caso base.

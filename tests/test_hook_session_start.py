@@ -267,6 +267,85 @@ class TestWithTheMod(Base):
         self.assertIn("systemMessage", out)
 
 
+class TestWithTheModSkipped(Base):
+    """A plugin seated above baton's (a Team org's built-in) may send the event
+    on past the mod's hook, and the payload then comes unmarked. The mod also
+    says so through the environment, and a terminal that showed it covers the
+    cold start that comes before that."""
+
+    CLI = {"CLAUDE_CODE_ENTRYPOINT": "cli"}
+
+    def start_env(self, env, source="clear", **extra):
+        return self.run_hook("session-start", self.payload("SessionStart", source=source, **extra), env=env)
+
+    def seen(self):
+        return storage.Paths(self.project).local / "mod-seen"
+
+    def test_the_environment_drops_the_receipt_in_the_terminal(self):
+        self.write_handoff()
+        rc, out, err = self.start_env({**self.CLI, "BATON_MOD": "terminal"})
+        self.assertEqual(rc, 0, err)
+        self.assertIn("this is where we are", self.context(out))
+        self.assertNotIn("systemMessage", out)
+
+    def test_the_environment_alone_outside_the_terminal_is_not_the_mod(self):
+        # A `claude -p` started from that terminal inherits the variable.
+        self.write_handoff()
+        for entrypoint in ("sdk-cli", None):
+            with self.subTest(entrypoint=entrypoint):
+                _, out, _ = self.start_env({"CLAUDE_CODE_ENTRYPOINT": entrypoint, "BATON_MOD": "terminal"})
+                self.assertIn("systemMessage", out)
+
+    def test_a_near_miss_in_the_environment_is_not_the_mod(self):
+        self.write_handoff()
+        _, out, _ = self.start_env({**self.CLI, "BATON_MOD": "1"})
+        self.assertIn("systemMessage", out)
+
+    def test_a_confirmed_mod_leaves_its_trace_and_a_cold_start_trusts_it(self):
+        self.write_handoff()
+        self.start_env(self.CLI, baton_mod=True)
+        self.assertTrue(self.seen().is_file())
+        # The next process: its startup comes unmarked and before the variable.
+        _, out, _ = self.start_env(self.CLI, source="startup")
+        self.assertIn("this is where we are", self.context(out))
+        self.assertNotIn("systemMessage", out)
+
+    def test_the_trace_is_for_the_cold_start_alone(self):
+        # By a /clear the mod has told the process; a /clear with no word from
+        # it is a process where it does not draw.
+        self.write_handoff()
+        self.start_env(self.CLI, baton_mod=True)
+        _, out, _ = self.start_env(self.CLI, source="clear")
+        self.assertIn("systemMessage", out)
+        _, out, _ = self.start_env(self.CLI, source="resume")
+        self.assertNotIn("systemMessage", out)
+
+    def test_the_trace_counts_in_the_terminal_alone(self):
+        self.write_handoff()
+        self.start_env(self.CLI, baton_mod=True)
+        _, out, _ = self.start_env({"CLAUDE_CODE_ENTRYPOINT": "claude-desktop"}, source="startup")
+        self.assertIn("systemMessage", out)
+
+    def test_an_old_trace_is_not_believed(self):
+        import os
+        import time
+        self.write_handoff()
+        self.start_env(self.CLI, baton_mod=True)
+        old = time.time() - 15 * 86400
+        os.utime(self.seen(), (old, old))
+        _, out, _ = self.start_env(self.CLI, source="startup")
+        self.assertIn("systemMessage", out)
+
+    def test_only_a_confirmed_mod_leaves_the_trace(self):
+        self.write_handoff()
+        self.start_env(self.CLI)
+        self.assertFalse(self.seen().exists())
+        self.start_env({"CLAUDE_CODE_ENTRYPOINT": "sdk-cli", "BATON_MOD": "terminal"})
+        self.assertFalse(self.seen().exists())
+        self.start_env({**self.CLI, "BATON_MOD": "terminal"})
+        self.assertTrue(self.seen().is_file())
+
+
 class TestStartFilter(Base):
     def test_honours_inject_on(self):
         self.write_handoff()

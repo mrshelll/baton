@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.6.1 — 2026-10-25
+
+### Fixed
+- **The receipt showed above the prompt although the band was there.** On a
+  Claude Team or Enterprise account, Claude Code seats a built-in plugin
+  (`cc-plugin-sec-default`) above the others, and it may send `SessionStart` and
+  `Stop` on past baton's mod: the payload then reached the Python hooks without
+  the mod's mark, and they printed their own receipt and threshold notice beside
+  the band. The mod now also tells the process itself, `BATON_MOD=terminal` in
+  the environment every hook inherits, which no plugin above can skip; it counts
+  under the terminal's REPL alone, so a `claude -p` started from there is not
+  fooled. For the first start of a process (`startup` or `resume`), which comes
+  before the mod can say anything, a project where the mod was confirmed in the
+  last 14 days counts too (`.baton/local/mod-seen`); nowhere else, so a process
+  where the mod did not load still gets its threshold notice. Claude Code's own
+  dim line saying the hook was skipped is the engine's and stays.
+- **`no handoff in this project` after a `cd` into a subfolder.** baton found the
+  root from the shell's folder, so a `cd` into a subfolder that is a repo of its
+  own (`.git`) moved it there: the band said there was no handoff, the `Stop`
+  logged `project not enabled` and missed the context thresholds, and `/baton`
+  would have written a handoff in the subfolder. The root is now found from the
+  folder the session started in, while the shell's folder lies beneath it: the
+  hooks read `CLAUDE_PROJECT_DIR`, the mod `$.session.root()` (passed as
+  `panel --root`), and `/baton` the `BATON_PROJECT_DIR` that the SessionStart
+  hook hands the Bash tool through `CLAUDE_ENV_FILE`. A nearer folder with a
+  handoff of its own — a project below the root, a repo that uses baton itself —
+  is still where the session stands, as before.
+- **The band's buttons were missing most of the time.** It offered only the
+  action of the moment, so with blockers left or a saved handoff it had none, and
+  both meant opening the panel. Wherever there is a handoff, `[ Write handoff ]`
+  and `[ New session ]` are now both there; the one of the moment goes first and
+  is drawn as the main one.
+- **The test suite read the HOME of whoever ran it.** A `~/.claude/baton.json`
+  with a `language` changed what dozens of tests saw. The suite now runs with an
+  empty HOME of its own and drops the session variables Claude Code sets.
+
 ## 0.6.0 — 2026-10-22
 
 Claude Code now compacts a session that sits idle: close to an hour without

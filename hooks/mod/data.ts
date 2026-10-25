@@ -147,10 +147,12 @@ function why($: EngineInterface, text: string): void {
 
 /**
  * Runs `baton.py panel --json` for the session and the folder and hands back
- * its JSON. Anything else (an exit code other than 0, a stdout that is not
- * that JSON, a version other than 1, a top-level shape the views would trip
- * on, a run that rejects or overruns) is the `error` state of the English
- * fallback. Never throws.
+ * its JSON. `root`, when given, is the folder the session started in: baton.py
+ * finds the project from there while `cwd` lies beneath it, so a shell `cd`
+ * into a repo of its own does not move the panel. Anything else (an exit code
+ * other than 0, a stdout that is not that JSON, a version other than 1, a
+ * top-level shape the views would trip on, a run that rejects or overruns) is
+ * the `error` state of the English fallback. Never throws.
  *
  * Only the top level is checked; what lies inside `handoff` and each of
  * `others` is baton.py's, shipped in the same plugin.
@@ -158,10 +160,11 @@ function why($: EngineInterface, text: string): void {
  * `project`, another project's `rel` (`others[]`), goes to baton.py as
  * `--project <rel>`, by argv: the panel of that project instead.
  */
-export async function loadPanel($: EngineInterface, sessionId: string, cwd: string, project?: string): Promise<PanelData> {
+export async function loadPanel($: EngineInterface, sessionId: string, cwd: string, project?: string, root?: string): Promise<PanelData> {
   try {
     const argv = [
       'python3', `${$.plugin.root}/scripts/baton.py`, 'panel', '--json', '--session', sessionId, '--cwd', cwd,
+      ...(root === undefined ? [] : ['--root', root]),
       ...(project === undefined ? [] : ['--project', project]),
     ]
     const { exitCode, stdout, stderr } = await $.process.run(argv, { timeoutMs: TIMEOUT_MS })
@@ -193,6 +196,18 @@ export async function loadPanel($: EngineInterface, sessionId: string, cwd: stri
 }
 
 /**
+ * The session as baton.py is asked about it: its id, its shell's folder, and
+ * the folder it started in (`$.session.root()`, which a shell `cd` does not
+ * move), undefined where the engine will not say.
+ */
+async function where($: EngineInterface): Promise<{ sessionId: string; cwd: string; root?: string }> {
+  const [sessionId, cwd, root] = await Promise.all([
+    $.session.id(), $.session.cwd(), $.session.root().catch(() => undefined),
+  ])
+  return { sessionId, cwd, root }
+}
+
+/**
  * The number of the last load started. A load that ends after a newer one
  * started writes nothing, so an older answer never covers a newer one. A
  * reload of the module starts over at 0, which is harmless.
@@ -212,8 +227,8 @@ export async function refresh($: EngineInterface): Promise<PanelData | null> {
   const ticket = ++latest
   let data: PanelData | null = null
   try {
-    const [sessionId, cwd] = await Promise.all([$.session.id(), $.session.cwd()])
-    data = await loadPanel($, sessionId, cwd)
+    const { sessionId, cwd, root } = await where($)
+    data = await loadPanel($, sessionId, cwd, undefined, root)
     if (ticket !== latest) return data
     const at = await $.clock.now()
     if (ticket !== latest) return data
@@ -239,8 +254,8 @@ let shown = 0
 export async function showProject($: EngineInterface, other: PanelOther): Promise<void> {
   const ticket = ++shown
   try {
-    const [sessionId, cwd] = await Promise.all([$.session.id(), $.session.cwd()])
-    const data = await loadPanel($, sessionId, cwd, other.rel)
+    const { sessionId, cwd, root } = await where($)
+    const data = await loadPanel($, sessionId, cwd, other.rel, root)
     if (ticket !== shown) return
     await update($, viewed, () => ({ rel: other.rel, name: other.name, data }))
     // A return to the own project may have landed during that write.

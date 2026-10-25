@@ -53,6 +53,13 @@ class Ctx:
     found: "projects.Discovery"
 
 
+def _session_root(args) -> Path:
+    """The root `--cwd` (else the current folder) belongs to, found from
+    `--root`, the folder the session started in, when it lies beneath it
+    (`storage.session_root`)."""
+    return storage.session_root(args.cwd or os.getcwd(), args.root)
+
+
 def _resolve(args, allow_new: bool = False):
     """Root, target, config, paths and strings: the preamble to every subcommand.
 
@@ -60,7 +67,7 @@ def _resolve(args, allow_new: bool = False):
     away: the candidates have already gone to stderr, and picking one for the
     user is exactly what must not happen.
     """
-    root = storage.project_root(args.cwd or os.getcwd())
+    root = _session_root(args)
     root_cfg = config.load(root)
     found = projects.discover(root, depth=root_cfg["discovery"]["depth"],
                               max_dirs=root_cfg["discovery"]["max_dirs"],
@@ -540,7 +547,7 @@ def _panel_handoff(target, paths: storage.Paths, strings: dict, session: str):
 
 def _panel(args) -> dict:
     """The JSON `panel --json` prints, version `PANEL_VERSION`."""
-    root = storage.project_root(args.cwd or os.getcwd())
+    root = _session_root(args)
     root_cfg = config.load(root)
     found = projects.discover(root, depth=root_cfg["discovery"]["depth"],
                               max_dirs=root_cfg["discovery"]["max_dirs"],
@@ -617,7 +624,7 @@ def cmd_panel(args) -> int:
     except Exception as exc:  # noqa: BLE001 - the panel draws the failure instead
         language, panel = output.DEFAULT_LANGUAGE, {}
         try:
-            language = config.load(storage.project_root(args.cwd or os.getcwd()))["language"]
+            language = config.load(_session_root(args))["language"]
             panel = {k: v for k, v in output.load_strings(language)["panel"].items()
                      if not k.startswith("_")}
         except Exception:  # noqa: BLE001 - an English line beats no JSON at all
@@ -645,6 +652,9 @@ def main(argv=None) -> int:
     def with_cwd(name, help_text, func, project_flag=True):
         sp = sub.add_parser(name, help=help_text)
         sp.add_argument("--cwd", default=None, help="project directory (defaults to the current one)")
+        sp.add_argument("--root", default=None,
+                        help="the folder the session started in, when --cwd lies beneath it "
+                             "(defaults to CLAUDE_PROJECT_DIR, then BATON_PROJECT_DIR)")
         if project_flag:
             sp.add_argument("--project", default=None,
                             help="which project in this root (name, relative path, or `.`)")

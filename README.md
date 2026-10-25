@@ -4,7 +4,7 @@
 
 ***English** · [Español](README.es.md)*
 
-[![tests](https://img.shields.io/badge/tests-596-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-628-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3%20stdlib-blue)](#requirements)
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 
@@ -378,17 +378,19 @@ a panel with the whole handoff.
 
 Under the title `baton`, one line says how the handoff stands:
 
-| When | The line reads | Button |
+| When | The line reads | Buttons |
 |---|---|---|
-| Normal | `handoff 2 h ago · memory` | |
-| After a compaction wrote it | `✓ handoff ready · just now` | `[ New session ]` |
-| A threshold was crossed | `⚠ context at 65 %` | `[ Write handoff ]` |
-| The handoff has blockers | `⚠ 2 open items · 3 h ago` | |
-| No handoff yet | `no handoff in this project` | `[ Write handoff ]` |
+| Normal | `handoff 2 h ago · memory` | `[ Write handoff ]` `[ New session ]` |
+| After a compaction wrote it | `✓ handoff ready · just now` | **`[ New session ]`** `[ Write handoff ]` |
+| A threshold was crossed | `⚠ context at 65 %` | **`[ Write handoff ]`** `[ New session ]` |
+| The handoff has blockers | `⚠ 2 open items · 3 h ago` | `[ Write handoff ]` `[ New session ]` |
+| No handoff yet | `no handoff in this project` | **`[ Write handoff ]`** |
 | The handoff cannot be read | `⚠ could not read the handoff` | |
 
+Wherever there is a handoff both buttons are there, so neither needs the panel;
+the one for the moment, in bold above, goes first and is drawn as the main one.
 On a narrow terminal the line keeps its words first: the hint goes, then the
-button, and only then is the line cut with `…`.
+second button, then the first, and only then is the line cut with `…`.
 
 Clicking the line opens the panel; `click → panel` sits on the right when it
 fits. `[ New session ]` runs `/clear` for you, as if you had typed it.
@@ -657,6 +659,13 @@ project on disk is not evidence that this handoff is that project's.
 In both, the model asks you in one line and passes the flag itself. You answer
 in words.
 
+The root is found from the folder the session started in, not from where its
+shell went: a `cd` into a subfolder that is a repo of its own (its `.git` is a
+root marker) does not move baton there, unless that folder has a handoff of its
+own — a project below the root, a repo that uses baton itself. The hooks read it from Claude Code
+(`CLAUDE_PROJECT_DIR`), the mod from the session, and `/baton` from the
+`BATON_PROJECT_DIR` that the SessionStart hook hands the Bash tool.
+
 The activation lives one session: a fresh start clears it, a compaction keeps it.
 
 The scan looks **two levels down** by default, which covers both shapes above. If
@@ -881,7 +890,7 @@ The band and the panel need a Claude Code that loads mods (built against
 ./tests/run.sh
 ```
 
-596 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
+628 tests on the stdlib's `unittest`: **no Claude Code, nothing to install**. The
 hook tests invoke the script as a subprocess with JSON on stdin, exactly like the
 harness, because that is the only way to cover the real contract. Temporary
 projects are created under a path with a space and an accent, so the awkward case

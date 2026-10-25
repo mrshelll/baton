@@ -78,6 +78,48 @@ def project_root(cwd) -> Path:
         return Path(cwd)
 
 
+#: Where the session started, in the order they are believed: the variable
+#: Claude Code gives its hooks, then baton's copy of it for the Bash tool (which
+#: gets none; the SessionStart hook writes it through CLAUDE_ENV_FILE).
+SESSION_DIR_VARS = ("CLAUDE_PROJECT_DIR", "BATON_PROJECT_DIR")
+
+
+def session_root(cwd, start=None) -> Path:
+    """The project root of the session: found from where it started, not from
+    where its shell went.
+
+    A shell `cd` moves a hook's `cwd`, and the CLI's, into a subfolder; one that
+    is a repo of its own carries a `.git`, a root marker, and `project_root` would
+    stop there. So when that nearest root has no handoff of its own and `cwd` is
+    the folder the session started in (`start`, else the first of
+    SESSION_DIR_VARS that is set) or lies beneath it, the root is found from that
+    folder. A nearest root WITH a handoff -- a project below the root, a repo
+    that uses baton itself -- is where the session stands, as it always was; so
+    is anything else: no such folder, a relative one, a `cwd` outside it.
+    Never raises.
+    """
+    near = project_root(cwd)
+    candidates = [start] + [os.environ.get(var) for var in SESSION_DIR_VARS]
+    started = next((c for c in candidates if c), None)
+    if not (started and Path(started).is_absolute()) or _has_handoff(near):
+        return near
+    try:
+        base = Path(started).resolve(strict=False)
+        Path(cwd).resolve(strict=False).relative_to(base)
+        return project_root(base)
+    except (OSError, ValueError):
+        return near
+
+
+def _has_handoff(root: Path) -> bool:
+    """Whether `root` holds a handoff, where its config puts the document. False
+    on any failure: the root then climbs to the session's, the common case."""
+    from lib import config  # here, not at the top: config imports this module's peers
+    try:
+        return Paths(root, document_rel=config.load(root)["document"]).document.is_file()
+    except Exception:  # noqa: BLE001 - a corrupt config is no handoff of its own
+        return False
+
 class Paths:
     """baton's paths inside a project. Computes them; creates nothing unasked."""
 
@@ -98,6 +140,7 @@ class Paths:
         self.compact_request = self.local / "compact-request.json"
         self.log = self.local / "log.jsonl"
         self.lock = self.local / ".lock"
+        self.mod_seen = self.local / "mod-seen"
 
     def ensure_local(self) -> None:
         self.local.mkdir(parents=True, exist_ok=True)
@@ -473,6 +516,30 @@ def note_compact_request(paths: Paths, session_id: str) -> None:
              if sid == keep or _note_age_ok(n, COMPACT_NOTE_HOURS)}
     notes[session_id] = {"session": session_id, "requested_at": now_utc(), "written": False}
     _save_notes(paths, notes)
+
+
+def note_mod_seen(paths: Paths) -> None:
+    """Record that baton's mod was confirmed drawing this project in a terminal:
+    an empty file whose time is the record. Touched at most once an hour, as a
+    Stop runs every turn. Never raises: it is a hint, not state."""
+    try:
+        if time.time() - paths.mod_seen.stat().st_mtime < 3600:
+            return
+    except OSError:
+        pass
+    try:
+        paths.local.mkdir(parents=True, exist_ok=True)
+        paths.mod_seen.touch()
+    except OSError:
+        pass
+
+
+def mod_seen(paths: Paths, days: float) -> bool:
+    """True when `note_mod_seen` ran for this project within `days`. Never raises."""
+    try:
+        return time.time() - paths.mod_seen.stat().st_mtime <= days * 86400
+    except OSError:
+        return False
 
 
 def mark_compact_written(paths: Paths, session_id: str, fingerprint: str) -> None:

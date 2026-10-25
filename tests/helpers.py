@@ -17,8 +17,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ODD_SUBDIR = "Agentes IA/próyecto de prueba"
 
 
+#: What a Claude Code session puts in the environment that changes what baton
+#: reads: a test run from inside one must not inherit it.
+SESSION_VARS = ("CLAUDE_PROJECT_DIR", "BATON_PROJECT_DIR", "CLAUDE_ENV_FILE",
+                "BATON_MOD", "CLAUDE_CODE_ENTRYPOINT")
+
+
 def clean_env(env=None):
     e = dict(os.environ if env is None else env)
+    for var in SESSION_VARS:
+        e.pop(var, None)
     e["LC_ALL"] = "C"
     return e
 

@@ -32,30 +32,39 @@ const faces = {
 
 const WIDE = 120
 
+/** The band's buttons, as `bandLine` lists them: the moment's own first and `primary`. */
+const NEW_ES = { kind: 'newSession', label: 'Sesión nueva' } as const
+const WRITE_ES = { kind: 'writeHandoff', label: 'Escribir traspaso' } as const
+const primary = <A extends object>(a: A) => ({ ...a, primary: true })
+const plain = <A extends object>(a: A) => ({ ...a, primary: false })
+
 // -- bandLine: what each face says, in each language -------------------------
 
-test('bandLine es: each face its line, its action and the hint, from the real templates', () => {
+test('bandLine es: each face its line, its buttons and the hint, from the real templates', () => {
   expect(bandLine(faces.ready(ES), WIDE)).toEqual({
     text: '✓ traspaso listo · recién', tone: 'success',
-    action: { kind: 'newSession', label: 'Sesión nueva' }, hint: 'clic → panel',
+    actions: [primary(NEW_ES), plain(WRITE_ES)], hint: 'clic → panel',
   })
   expect(bandLine(faces.threshold(ES), WIDE)).toEqual({
     text: '⚠ contexto al 70 %', tone: 'warning',
-    action: { kind: 'writeHandoff', label: 'Escribir traspaso' }, hint: 'clic → panel',
+    actions: [primary(WRITE_ES), plain(NEW_ES)], hint: 'clic → panel',
   })
   expect(bandLine(faces.none(ES), WIDE)).toEqual({
     text: 'sin traspaso en este proyecto', tone: undefined,
-    action: { kind: 'writeHandoff', label: 'Escribir traspaso' }, hint: null,
+    actions: [primary(WRITE_ES)], hint: null,
   })
   expect(bandLine(faces.error(ES), WIDE)).toEqual({
-    text: '⚠ no se pudo leer el traspaso', tone: 'warning', action: null, hint: 'clic → panel',
+    text: '⚠ no se pudo leer el traspaso', tone: 'warning', actions: [], hint: 'clic → panel',
   })
+  // With a handoff and nothing of the moment, both buttons, neither primary.
   expect(bandLine(faces.calm(faces.aged(ES, 'hace 2 h')), WIDE)).toEqual({
-    text: 'traspaso hace 2 h · memoria', tone: undefined, action: null, hint: 'clic → panel',
+    text: 'traspaso hace 2 h · memoria', tone: undefined,
+    actions: [plain(WRITE_ES), plain(NEW_ES)], hint: 'clic → panel',
   })
   // The fixture as captured: two blockers left, so the band counts them.
   expect(bandLine(faces.aged(ES, 'hace 2 h'), WIDE)).toEqual({
-    text: '⚠ 2 pendientes · hace 2 h', tone: 'warning', action: null, hint: 'clic → panel',
+    text: '⚠ 2 pendientes · hace 2 h', tone: 'warning',
+    actions: [plain(WRITE_ES), plain(NEW_ES)], hint: 'clic → panel',
   })
 })
 
@@ -64,21 +73,24 @@ test('bandLine: the state decides, not the threshold baton.py still reports', ()
   // the crossing still in `threshold`: the band stops asking.
   const crossed = { tier: 65, percent: 70 }
   expect(bandLine({ ...faces.calm(faces.aged(ES, 'hace 2 h')), threshold: crossed }, WIDE)).toEqual({
-    text: 'traspaso hace 2 h · memoria', tone: undefined, action: null, hint: 'clic → panel',
+    text: 'traspaso hace 2 h · memoria', tone: undefined,
+    actions: [plain(WRITE_ES), plain(NEW_ES)], hint: 'clic → panel',
   })
   expect(bandLine({ ...faces.ready(ES), threshold: crossed }, WIDE)).toMatchObject({
-    text: '✓ traspaso listo · recién', action: { kind: 'newSession' },
+    text: '✓ traspaso listo · recién', actions: [primary(NEW_ES), plain(WRITE_ES)],
   })
 })
 
 test('bandLine en: the same faces in English', () => {
-  expect(bandLine(faces.ready(EN), WIDE)).toMatchObject({ text: '✓ handoff ready · just now', action: { kind: 'newSession', label: 'New session' }, hint: 'click → panel' })
-  expect(bandLine(faces.threshold(EN), WIDE)).toMatchObject({ text: '⚠ context at 70 %', action: { kind: 'writeHandoff', label: 'Write handoff' } })
-  expect(bandLine(faces.none(EN), WIDE)).toMatchObject({ text: 'no handoff in this project', action: { label: 'Write handoff' }, hint: null })
-  expect(bandLine(faces.error(EN), WIDE)).toMatchObject({ text: '⚠ could not read the handoff', action: null })
-  expect(bandLine(faces.calm(EN), WIDE)).toMatchObject({ text: 'handoff just now · memory', action: null, hint: 'click → panel' })
-  // SAMPLE has one blocker.
-  expect(bandLine(EN, WIDE)).toMatchObject({ text: '⚠ 1 open item · just now', tone: 'warning' })
+  const NEW_EN = { kind: 'newSession', label: 'New session' } as const
+  const WRITE_EN = { kind: 'writeHandoff', label: 'Write handoff' } as const
+  expect(bandLine(faces.ready(EN), WIDE)).toMatchObject({ text: '✓ handoff ready · just now', actions: [primary(NEW_EN), plain(WRITE_EN)], hint: 'click → panel' })
+  expect(bandLine(faces.threshold(EN), WIDE)).toMatchObject({ text: '⚠ context at 70 %', actions: [primary(WRITE_EN), plain(NEW_EN)] })
+  expect(bandLine(faces.none(EN), WIDE)).toMatchObject({ text: 'no handoff in this project', actions: [primary(WRITE_EN)], hint: null })
+  expect(bandLine(faces.error(EN), WIDE)).toMatchObject({ text: '⚠ could not read the handoff', actions: [] })
+  expect(bandLine(faces.calm(EN), WIDE)).toMatchObject({ text: 'handoff just now · memory', actions: [plain(WRITE_EN), plain(NEW_EN)], hint: 'click → panel' })
+  // SAMPLE has one blocker: both buttons beside it.
+  expect(bandLine(EN, WIDE)).toMatchObject({ text: '⚠ 1 open item · just now', tone: 'warning', actions: [plain(WRITE_EN), plain(NEW_EN)] })
 })
 
 /** The fixture with exactly `n` blockers left. */
@@ -103,7 +115,7 @@ test('bandLine: the mode in the project language, continue as well as memory', (
 test('bandLine: no project loaded says so, and offers to write (baton then asks where)', () => {
   expect(bandLine(faces.noProject(ES), WIDE)).toEqual({
     text: 'ningún proyecto cargado', tone: undefined,
-    action: { kind: 'writeHandoff', label: 'Escribir traspaso' }, hint: null,
+    actions: [primary(WRITE_ES)], hint: null,
   })
 })
 
@@ -123,7 +135,7 @@ test('bandLine: the fallback after a failed load is the English error face', () 
     version: 1, language: 'en', state: 'error', project: null, handoff: null, threshold: null,
     others: [], strings: { ...FALLBACK_STRINGS }, error: FALLBACK_STRINGS.loadFailed,
   }
-  expect(bandLine(failed, WIDE)).toEqual({ text: '⚠ could not read the handoff', tone: 'warning', action: null, hint: 'click → panel' })
+  expect(bandLine(failed, WIDE)).toEqual({ text: '⚠ could not read the handoff', tone: 'warning', actions: [], hint: 'click → panel' })
 })
 
 // -- bandLine: the width -----------------------------------------------------
@@ -131,29 +143,34 @@ test('bandLine: the fallback after a failed load is the English error face', () 
 test('bandLine at 36 columns (a 40-column band\'s inside): a button that does not fit whole is not drawn, nor the hint', () => {
   // 25 + 3 + `[ Sesión nueva ]` (16) = 44 > 36; 25 + 3 + 12 = 40 > 36.
   expect(bandLine(faces.ready(ES), 36)).toEqual({
-    text: '✓ traspaso listo · recién', tone: 'success', action: null, hint: null,
+    text: '✓ traspaso listo · recién', tone: 'success', actions: [], hint: null,
   })
   // At 40 the button still does not fit, and the hint then does (25 + 3 + 12).
-  expect(bandLine(faces.ready(ES), 40)).toMatchObject({ action: null, hint: 'clic → panel' })
+  expect(bandLine(faces.ready(ES), 40)).toMatchObject({ actions: [], hint: 'clic → panel' })
   // 27 + 3 + 12 = 42 > 36: the line alone.
   expect(bandLine(faces.calm(faces.aged(ES, 'hace 2 h')), 36)).toMatchObject({ text: 'traspaso hace 2 h · memoria', hint: null })
 })
 
 test('bandLine: a line wider than the band is cut with …, and nothing goes beside it', () => {
-  expect(bandLine(faces.ready(ES), 12)).toEqual({ text: '✓ traspaso…', tone: 'success', action: null, hint: null })
+  expect(bandLine(faces.ready(ES), 12)).toEqual({ text: '✓ traspaso…', tone: 'success', actions: [], hint: null })
   expect(bandLine(faces.ready(ES), 25).text).toBe('✓ traspaso listo · recién')
   expect(bandLine(faces.ready(ES), 24).text).toBe('✓ traspaso listo · reci…')
   expect(bandLine(faces.ready(ES), 1).text).toBe('…')
 })
 
-test('bandLine: the button at the exact width it needs, the hint only with room left', () => {
+test('bandLine: each button at the exact width it needs, the moment\'s first, the hint only with room left', () => {
   const needs = 25 + 3 + 16
-  expect(bandLine(faces.ready(ES), needs).action).toEqual({ kind: 'newSession', label: 'Sesión nueva' })
+  expect(bandLine(faces.ready(ES), needs).actions).toEqual([primary(NEW_ES)])
   expect(bandLine(faces.ready(ES), needs).hint).toBeNull()
-  expect(bandLine(faces.ready(ES), needs - 1).action).toBeNull()
-  // The hint after the button: 44 + 3 + `clic → panel` (12).
-  expect(bandLine(faces.ready(ES), needs + 15).hint).toBe('clic → panel')
-  expect(bandLine(faces.ready(ES), needs + 14).hint).toBeNull()
+  expect(bandLine(faces.ready(ES), needs - 1).actions).toEqual([])
+  // The second after the first: 44 + 3 + `[ Escribir traspaso ]` (21).
+  const both = needs + 3 + 21
+  expect(bandLine(faces.ready(ES), both).actions).toEqual([primary(NEW_ES), plain(WRITE_ES)])
+  expect(bandLine(faces.ready(ES), both - 1).actions).toEqual([primary(NEW_ES)])
+  // The hint goes after the buttons that fit: here after the first (44 + 3 + 12).
+  expect(bandLine(faces.ready(ES), both - 1).hint).toBe('clic → panel')
+  expect(bandLine(faces.ready(ES), both + 15).hint).toBe('clic → panel')
+  expect(bandLine(faces.ready(ES), both + 14).hint).toBeNull()
   // No button: the hint right after the line.
   expect(bandLine(faces.error(ES), 29 + 3 + 12).hint).toBe('clic → panel')
   expect(bandLine(faces.error(ES), 29 + 3 + 11).hint).toBeNull()
@@ -276,6 +293,8 @@ function world(on: On, data: PanelData, opts: { other?: true; below?: Exclude<Be
   on('session.surfaces', () => ({ value: ['terminal'] as RenderSurface[] }))
   on('session.id', () => ({ value: 'sesión 1' }))
   on('session.cwd', () => ({ value: '/Users/someone/Mis proyectos/proyecto uno' }))
+  const sets: { name: string; value?: string }[] = []
+  on('env.set', (_$, e) => { sets.push({ name: e.name, value: e.value }); return { value: {} } })
   on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify(data), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('state.set', async (_$, e, next) => {
     const r = await next(e)
@@ -309,7 +328,7 @@ function world(on: On, data: PanelData, opts: { other?: true; below?: Exclude<Be
     else waiting.push({ n, settle: d.settle })
     return d.promise
   }
-  return { runs, opens, toasts, loads }
+  return { runs, opens, toasts, loads, sets }
 }
 
 /** The panel loaded the way a session loads it: the end of a main-loop turn. */
@@ -339,7 +358,9 @@ test('over an empty band: the shared frame, keyed band:frame, with baton\'s sect
   expect(texts(section.children?.[1])).toEqual(['✓ traspaso listo · recién', 'clic → panel'])
   expect(await ui.find({ key: 'baton:open' })).toMatchObject({ type: 'Button', text: '✓ traspaso listo · recién' })
   expect(await ui.find({ type: 'Text', text: '✓ traspaso listo · recién' })).toMatchObject({ props: { color: 'success', wrap: 'truncate-end' } })
-  expect(await ui.find({ key: 'baton:new-session' })).toMatchObject({ type: 'Button', props: { label: 'Sesión nueva' } })
+  expect(await ui.find({ key: 'baton:new-session' })).toMatchObject({ type: 'Button', props: { label: 'Sesión nueva', variant: 'primary' } })
+  expect(await ui.find({ key: 'baton:write' })).toMatchObject({ type: 'Button', props: { label: 'Escribir traspaso' } })
+  expect((await ui.find({ key: 'baton:write' }))?.props.variant).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^clic → panel$/ })).toMatchObject({ props: { dimColor: true } })
   expect(await ui.find({ key: 'baton:band' })).toBeUndefined()
 })
@@ -535,6 +556,16 @@ test('with no row to draw in, or no column, the band is what is beneath', async 
   expect(await (await mount($, { bodyColumns: 0 })).drawn()).toMatchObject({ type: 'engine' })
 })
 
+test('the band drawn on the terminal tells the process once (BATON_MOD=terminal); on desktop it does not', async ($, on) => {
+  const w = world(on, faces.ready(ES))
+  await load($, w)
+  await (await mount($, {}, 'desktop')).unmount()
+  expect(w.sets).toEqual([])
+  await (await mount($)).unmount()
+  await mount($, { bodyColumns: 80 })
+  expect(w.sets).toEqual([{ name: 'BATON_MOD', value: 'terminal' }])
+})
+
 test('a narrow band (40 columns) keeps one row: no hint, no button that does not fit', async ($, on) => {
   const w = world(on, faces.ready(ES))
   await load($, w)
@@ -573,6 +604,22 @@ test('[ Escribir traspaso ] runs /baton:baton, then the panel is loaded again', 
   await ui.press({ key: 'baton:write' })
   await w.loads(2)
   expect(w.runs).toEqual([{ command: 'baton:baton', args: '' }])
+})
+
+test('with open items left, both buttons are in the band and each runs its command', async ($, on) => {
+  // The band of a handoff with blockers (`⚠ 2 pendientes`): nothing of the
+  // moment, so neither is primary, and neither needs the panel opened first.
+  const w = world(on, ES)
+  await load($, w)
+  const ui = await mount($)
+  expect((await ui.find({ key: 'baton:write' }))?.props.variant).toBeUndefined()
+  expect((await ui.find({ key: 'baton:new-session' }))?.props.variant).toBeUndefined()
+  await ui.press({ key: 'baton:write' })
+  await w.loads(2)
+  await ui.press({ key: 'baton:new-session' })
+  await w.loads(3)
+  expect(w.runs).toEqual([{ command: 'baton:baton', args: '' }, { command: 'clear', args: '' }])
+  expect(w.opens).toEqual([])
 })
 
 test('an action that fails says so in a toast, in the project language, and throws nothing', async ($, on) => {
